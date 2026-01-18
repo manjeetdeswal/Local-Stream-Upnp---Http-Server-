@@ -1,0 +1,123 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="using:LocalStreamPC"
+        mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="600"
+        x:Class="LocalStreamPC.RemoteBrowser"
+        Title="Remote Browser"
+        Background="#F3F4F6">
+
+	<Window.Styles>
+		<Style Selector="ListBoxItem">
+			<Setter Property="Padding" Value="5"/>
+			<Setter Property="CornerRadius" Value="6"/>
+			<Setter Property="Margin" Value="0,2"/>
+		</Style>
+		<Style Selector="ListBoxItem:pointerover /template/ ContentPresenter">
+			<Setter Property="Background" Value="#EBF8FF"/>
+		</Style>
+		<Style Selector="ListBoxItem:selected /template/ ContentPresenter">
+			<Setter Property="Background" Value="#BEE3F8"/>
+		</Style>
+	</Window.Styles>
+
+	<Grid RowDefinitions="Auto, *">
+
+		<Border Grid.Row="0" Background="White" Padding="15" BoxShadow="0 2 4 0 #10000000" ZIndex="1">
+			<Grid ColumnDefinitions="Auto, Auto, *, Auto, Auto">
+
+				<Button Name="BtnBack" Click="BtnBack_Click" Background="Transparent" Foreground="#4A5568" BorderThickness="0">
+					<StackPanel Orientation="Horizontal" Spacing="5">
+						<TextBlock Text="⬅" FontWeight="Bold"/>
+						<TextBlock Text="Back"/>
+					</StackPanel>
+				</Button>
+
+				<Button Name="BtnPlayAll" Click="BtnPlayAll_Click" Grid.Column="1" Margin="15,0,0,0"
+						Background="#3182CE" Foreground="White" CornerRadius="20" Padding="15,5">
+					<StackPanel Orientation="Horizontal" Spacing="8">
+						<TextBlock Text="▶"/>
+						<TextBlock Text="Play All (VLC)"/>
+					</StackPanel>
+				</Button>
+
+				<StackPanel Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Center">
+					<TextBlock Name="TxtServerName" Text="Server Name" FontWeight="Bold" Foreground="#2D3748" HorizontalAlignment="Center"/>
+					<TextBlock Text="Remote File Browser" FontSize="10" Foreground="#A0AEC0" HorizontalAlignment="Center"/>
+				</StackPanel>
+
+				<ProgressBar Name="LoadingBar" Grid.Column="3" IsIndeterminate="True" Width="100" IsVisible="False" Margin="15,0" Height="4"/>
+
+				<Button Name="BtnToggleView" Click="BtnToggleView_Click" Grid.Column="4" Content="👁 View Mode" Background="#EDF2F7" Foreground="#4A5568"/>
+			</Grid>
+		</Border>
+
+		<Panel Grid.Row="1" Margin="15">
+
+			<ListBox Name="ListRemoteFiles_List" DoubleTapped="ListRemoteFiles_DoubleTapped"
+					 Background="White" CornerRadius="8" Padding="10" SelectionMode="Multiple">
+
+				<ListBox.ContextMenu>
+					<ContextMenu>
+						<MenuItem Header="▶ Play Selected in VLC" Click="CtxPlaySelected_Click"/>
+					</ContextMenu>
+				</ListBox.ContextMenu>
+
+				<ListBox.ItemTemplate>
+					<DataTemplate x:DataType="local:RemoteItem">
+						<Grid ColumnDefinitions="50, *, Auto">
+							<Border Grid.Column="0" Width="40" Height="40" CornerRadius="6" Background="#F7FAFC" ClipToBounds="True">
+								<Panel>
+									<TextBlock Text="{Binding TypeIcon}" FontSize="20" HorizontalAlignment="Center" VerticalAlignment="Center" IsVisible="{Binding IsIconVisible}"/>
+									<Image Source="{Binding ThumbnailBitmap}" Stretch="UniformToFill" IsVisible="{Binding IsImageVisible}"/>
+								</Panel>
+							</Border>
+
+							<StackPanel Grid.Column="1" Margin="15,0,0,0" VerticalAlignment="Center">
+								<TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="14" Foreground="#2D3748"/>
+								<TextBlock Text="{Binding Details}" Foreground="#A0AEC0" FontSize="12"/>
+							</StackPanel>
+
+							<TextBlock Grid.Column="2" Text="›" Foreground="#CBD5E0" FontSize="20" VerticalAlignment="Center" Margin="0,0,10,0"/>
+						</Grid>
+					</DataTemplate>
+				</ListBox.ItemTemplate>
+			</ListBox>
+
+			<ListBox Name="ListRemoteFiles_Grid" DoubleTapped="ListRemoteFiles_DoubleTapped"
+					 Background="Transparent" IsVisible="False" SelectionMode="Multiple">
+
+				<ListBox.ContextMenu>
+					<ContextMenu>
+						<MenuItem Header="▶ Play Selected in VLC" Click="CtxPlaySelected_Click"/>
+					</ContextMenu>
+				</ListBox.ContextMenu>
+
+				<ListBox.ItemsPanel>
+					<ItemsPanelTemplate>
+						<WrapPanel HorizontalAlignment="Center"/>
+					</ItemsPanelTemplate>
+				</ListBox.ItemsPanel>
+
+				<ListBox.ItemTemplate>
+					<DataTemplate x:DataType="local:RemoteItem">
+						<Border Width="140" Height="170" Background="White" Margin="8" CornerRadius="8" BoxShadow="0 2 4 0 #10000000">
+							<Grid RowDefinitions="*, Auto">
+								<Border Grid.Row="0" CornerRadius="8,8,0,0" Background="#F7FAFC" ClipToBounds="True">
+									<Panel>
+										<TextBlock Text="{Binding TypeIcon}" FontSize="40" HorizontalAlignment="Center" VerticalAlignment="Center" IsVisible="{Binding IsIconVisible}"/>
+										<Image Source="{Binding ThumbnailBitmap}" Stretch="UniformToFill" IsVisible="{Binding IsImageVisible}"/>
+									</Panel>
+								</Border>
+								<TextBlock Grid.Row="1" Text="{Binding Title}" Margin="10" TextWrapping="NoWrap"
+										   TextTrimming="CharacterEllipsis" FontSize="12" HorizontalAlignment="Center" Foreground="#4A5568"/>
+							</Grid>
+						</Border>
+					</DataTemplate>
+				</ListBox.ItemTemplate>
+			</ListBox>
+
+		</Panel>
+	</Grid>
+</Window>

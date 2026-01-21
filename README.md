@@ -1,119 +1,157 @@
-📡 LocalStream
-Universal Local Media Server for Windows, Linux, macOS, and Android.
+<div align="center">
 
-LocalStream turns your computer into a powerful local media server. Stream movies, music, and photos to any device on your Wi-Fi network (Smart TVs, Phones, Tablets) via a modern Web Interface or UPnP/DLNA.
+  <h1>📡 LocalStream</h1>
+  
+  <p>
+    <strong>Universal Local Media Server for Windows, Linux, macOS, and Android.</strong>
+  </p>
 
-✨ Features
-⚡ Zero Lag Streaming: Streams directly over LAN. No internet speed caps.
+  <p>
+    <a href="https://dotnet.microsoft.com/">
+      <img src="https://img.shields.io/badge/.NET-8.0-512BD4?style=flat&logo=dotnet" alt=".NET 8" />
+    </a>
+    <a href="https://avaloniaui.net/">
+      <img src="https://img.shields.io/badge/UI-Avalonia-AF1859?style=flat" alt="Avalonia UI" />
+    </a>
+    <img src="https://img.shields.io/badge/Platform-Win%20%7C%20Linux%20%7C%20Mac%20%7C%20Android-lightgrey" alt="Platforms" />
+    <img src="https://img.shields.io/badge/License-MIT-green" alt="License" />
+  </p>
 
-🌐 Cross-Platform Server: Runs natively on Windows, Linux, and macOS.
+  <p>
+    <b>LocalStream</b> turns your computer into a powerful local media server.<br>
+    Stream movies, music, and photos to any device on your Wi-Fi network<br>
+    (Smart TVs, Phones, Tablets) via a modern Web Interface or UPnP/DLNA.
+  </p>
 
-📱 Android Client: Dedicated app for mobile browsing and playback.
+  <br>
 
-📺 UPnP / DLNA Support: Automatically discovered by Smart TVs and VLC.
+  <a href="#">
+    <img src="https://img.shields.io/badge/⬇_Download_Latest_Release-3B82F6?style=for-the-badge&logo=github" height="40">
+  </a>
 
-🌍 Modern Web Interface: Browse and play files from any web browser (Chrome, Safari, Edge).
+</div>
 
-🖼️ Smart Previews: Auto-generates thumbnails for videos (FFmpeg) and album art for music.
+<br>
+<hr>
 
-📂 File Management: Upload files to your PC or download folders as ZIPs.
+## ✨ Features
 
-🌗 Dark Mode: Beautiful, adaptive UI.
+<table>
+  <tr>
+    <td>⚡ <b>Zero Lag Streaming</b></td>
+    <td>Streams directly over LAN. No internet speed caps.</td>
+  </tr>
+  <tr>
+    <td>🌐 <b>Cross-Platform</b></td>
+    <td>Runs natively on Windows, Linux, and macOS.</td>
+  </tr>
+  <tr>
+    <td>📱 <b>Android Client</b></td>
+    <td>Dedicated app for mobile browsing and playback.</td>
+  </tr>
+  <tr>
+    <td>📺 <b>UPnP / DLNA</b></td>
+    <td>Automatically discovered by Smart TVs and VLC.</td>
+  </tr>
+  <tr>
+    <td>🌍 <b>Web Interface</b></td>
+    <td>Browse and play files from any web browser.</td>
+  </tr>
+  <tr>
+    <td>🖼️ <b>Smart Previews</b></td>
+    <td>Auto-generates thumbnails (FFmpeg) and album art.</td>
+  </tr>
+</table>
 
-📥 Installation & Usage
-🪟 Windows
-Download LocalStream-Win.zip from the Releases page.
+<br>
 
-Extract the ZIP file.
+## 📥 Installation & Usage
 
-Run LocalStreamPC.exe.
+<details>
+<summary><strong>🪟 Windows (Click to Expand)</strong></summary>
 
-Note: If prompted by Windows SmartScreen, click More Info -> Run Anyway.
+1. Download **`LocalStream-Win.zip`** from Releases.
+2. Extract the ZIP file.
+3. Run `LocalStreamPC.exe`.
+4. *Note:* If prompted by Windows SmartScreen, click **More Info -> Run Anyway**.
 
-🐧 Linux
-Download LocalStream-Linux.zip.
+</details>
 
-Open Terminal and unzip/install:
+<details>
+<summary><strong>🐧 Linux (Click to Expand)</strong></summary>
 
-Bash
-
-unzip LocalStream-Linux.zip
-chmod +x LocalStreamPC
-chmod +x ffmpeg
+1. Download **`LocalStream-Linux.zip`**.
+2. Open Terminal and unzip/install:
+   ```bash
+   unzip LocalStream-Linux.zip
+   chmod +x LocalStreamPC
+   chmod +x ffmpeg
 Run the app:
 
 Bash
 
 ./LocalStreamPC
-🍎 macOS
+</details>
+
+<details> <summary><strong>🍎 macOS (Click to Expand)</strong></summary>
+
 Download LocalStream-Mac.zip.
 
 Extract the files.
 
-Fix "App is Damaged" Error: Apple blocks unsigned apps by default. Run this in Terminal:
+Fix "App is Damaged" Error:
 
 Bash
 
 xattr -cr ~/Downloads/LocalStreamPC/
 Double-click LocalStreamPC to launch.
 
-🤖 Android
+</details>
+
+<details> <summary><strong>🤖 Android (Click to Expand)</strong></summary>
+
 Download LocalStream-Android.apk to your phone.
 
 Tap to install.
 
-Note: You may need to enable "Install from Unknown Sources" in your browser settings.
+Note: Enable "Install from Unknown Sources" if prompted.
 
 Use the app to connect to your PC server automatically.
 
+</details>
+
 🛠️ Building from Source
-If you want to modify the code or build it yourself, you need the .NET 8 SDK.
-
-Prerequisites
-.NET 8.0 SDK
-
-FFmpeg binaries for your OS
+To build this project yourself, you need the .NET 8 SDK.
 
 1. Clone the Repo
 Bash
 
-git clone https://github.com/yourusername/LocalStream.git
+git clone [https://github.com/yourusername/LocalStream.git](https://github.com/yourusername/LocalStream.git)
 cd LocalStream
-2. Add FFmpeg Binaries
-To support cross-platform builds, create a Binaries folder in the project root and add the ffmpeg / ffprobe executables for each OS:
+2. Add Binaries
+Create a Binaries folder in the project root and add ffmpeg / ffprobe executables:
 
 Plaintext
 
 /LocalStreamPC
   /Binaries
     /win   (ffmpeg.exe, ffprobe.exe)
-    /linux (ffmpeg, ffprobe)     <-- No extension
-    /mac   (ffmpeg, ffprobe)     <-- No extension
-3. Build & Publish
-Windows:
+    /linux (ffmpeg, ffprobe)  <-- No extension
+    /mac   (ffmpeg, ffprobe)  <-- No extension
+3. Build Command
+Bash
 
-PowerShell
-
+# Windows
 dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
-Linux:
 
-Bash
-
+# Linux
 dotnet publish -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true
-macOS (Apple Silicon):
 
-Bash
-
+# macOS (Apple Silicon)
 dotnet publish -c Release -r osx-arm64 --self-contained true -p:PublishSingleFile=true
 🤝 How It Works
-HTTP Server (Port 8080): Hosts a web interface and handles file streaming. It supports Range-Requests, allowing you to seek/skip in videos instantly.
+HTTP Server (Port 8080): Hosts a web interface and handles file streaming. Supports Range-Requests for instant seeking.
 
-UPnP (SSDP): Broadcasts presence to the network so devices like Samsung TVs, Roku, and VLC can find it without typing IP addresses.
+UPnP (SSDP): Broadcasts presence to the network so devices like Samsung TVs, Roku, and VLC can auto-discover the server.
 
-FFmpeg Integration: Uses Xabe.FFmpeg to generate snapshots of videos on the fly for the web interface.
-
-📄 License
-Distributed under the MIT License. See LICENSE for more information.
-
-❤️ Contributing
-Pull requests are welcome! For major changes, please open an issue first to discuss what you would like to change.
+FFmpeg Integration: Uses Xabe.FFmpeg to generate video thumbnails on the fly.

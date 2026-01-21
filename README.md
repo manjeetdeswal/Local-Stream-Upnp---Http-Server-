@@ -7,14 +7,14 @@
   </p>
 
   <p>
-    <a href="[https://dotnet.microsoft.com/](https://dotnet.microsoft.com/)">
-      <img src="[https://img.shields.io/badge/.NET-8.0-512BD4?style=flat&logo=dotnet](https://img.shields.io/badge/.NET-8.0-512BD4?style=flat&logo=dotnet)" alt=".NET 8" />
+    <a href="https://dotnet.microsoft.com/">
+      <img src="https://img.shields.io/badge/.NET-8.0-512BD4?style=flat&logo=dotnet" alt=".NET 8" />
     </a>
-    <a href="[https://avaloniaui.net/](https://avaloniaui.net/)">
-      <img src="[https://img.shields.io/badge/UI-Avalonia-AF1859?style=flat](https://img.shields.io/badge/UI-Avalonia-AF1859?style=flat)" alt="Avalonia UI" />
+    <a href="https://avaloniaui.net/">
+      <img src="https://img.shields.io/badge/UI-Avalonia-AF1859?style=flat" alt="Avalonia UI" />
     </a>
-    <img src="[https://img.shields.io/badge/Platform-Win%20%7C%20Linux%20%7C%20Mac%20%7C%20Android-lightgrey](https://img.shields.io/badge/Platform-Win%20%7C%20Linux%20%7C%20Mac%20%7C%20Android-lightgrey)" alt="Platforms" />
-    <img src="[https://img.shields.io/badge/License-MIT-green](https://img.shields.io/badge/License-MIT-green)" alt="License" />
+    <img src="https://img.shields.io/badge/Platform-Win%20%7C%20Linux%20%7C%20Mac%20%7C%20Android-lightgrey" alt="Platforms" />
+    <img src="https://img.shields.io/badge/License-MIT-green" alt="License" />
   </p>
 
   <p>
@@ -26,10 +26,10 @@
   <br>
 
   <a href="#-downloads">
-    <img src="[https://img.shields.io/badge/](https://img.shields.io/badge/)⬇_Download_App-3B82F6?style=for-the-badge&logo=windows" height="40">
+    <img src="https://img.shields.io/badge/⬇_Download_App-3B82F6?style=for-the-badge&logo=windows" height="40">
   </a>
   <a href="#-how-to-use">
-    <img src="[https://img.shields.io/badge/](https://img.shields.io/badge/)📖_Read_Guide-1F2937?style=for-the-badge&logo=readthedocs" height="40">
+    <img src="https://img.shields.io/badge/📖_Read_Guide-1F2937?style=for-the-badge&logo=readthedocs" height="40">
   </a>
 
 </div>

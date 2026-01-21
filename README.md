@@ -57,7 +57,7 @@
 | **Windows** | [**`LocalStream-Win.zip`**](#) | Windows 10 & 11 (x64) |
 | **Linux** | [**`LocalStream-Linux.zip`**](#) | Ubuntu, Debian, Fedora |
 | **macOS** | [**`LocalStream-Mac.zip`**](#) | Apple Silicon (M1/M2) |
-| **Android** | [**`LocalStream-Android.apk`**](#) | Android 10+ (Client App) |
+| **Android** | [**`Download from play store`**](#) | Android 10+ (Client App) |
 
 <br>
 
@@ -108,13 +108,11 @@ Double-click LocalStreamPC to launch.
 
 <details> <summary><strong>🤖 Android (Click to Expand)</strong></summary>
 
-Download LocalStream-Android.apk to your phone.
+Download LocalStream-Android.apk from play store.
 
-Tap to install.
 
-Note: Enable "Install from Unknown Sources" if prompted.
 
-Use the app to connect to your PC server automatically.
+Use the app to connect to your PC server or Vice Versa.
 
 </details>
 

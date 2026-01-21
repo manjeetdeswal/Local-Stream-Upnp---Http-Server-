@@ -26,9 +26,48 @@
     <PackageReference Include="Xabe.FFmpeg" Version="6.0.2" />
   </ItemGroup>
 
-  <ItemGroup>
-    <None Update="ffmpeg.exe">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
+	<ItemGroup Condition="$(RuntimeIdentifier.StartsWith('win'))">
+		<Content Include="Binaries\win\ffmpeg.exe">
+			<Link>ffmpeg.exe</Link>
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+			<ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+		</Content>
+		<Content Include="Binaries\win\ffprobe.exe">
+			<Link>ffprobe.exe</Link>
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+			<ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+		</Content>
+	</ItemGroup>
+
+	<ItemGroup Condition="$(RuntimeIdentifier.StartsWith('linux'))">
+		<Content Include="Binaries\linux\ffmpeg">
+			<Link>ffmpeg</Link>
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+			<ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+		</Content>
+		<Content Include="Binaries\linux\ffprobe">
+			<Link>ffprobe</Link>
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+			<ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+		</Content>
+	</ItemGroup>
+
+	<ItemGroup Condition="$(RuntimeIdentifier.StartsWith('osx'))">
+		<Content Include="Binaries\mac\ffmpeg">
+			<Link>ffmpeg</Link>
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+			<ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+		</Content>
+		<Content Include="Binaries\mac\ffprobe">
+			<Link>ffprobe</Link>
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+			<ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+		</Content>
+	</ItemGroup>
 </Project>

@@ -164,9 +164,10 @@ namespace LocalStreamPC
         //  RECURSIVE PLAYLIST LOGIC (Shared)
         // ==========================================
 
-        private async Task<List<string>> FetchRecursiveUrlsAsync(string containerId)
+        // CHANGE: Returns List<RemoteItem> instead of List<string> so we keep the Titles
+        private async Task<List<RemoteItem>> FetchRecursiveUrlsAsync(string containerId)
         {
-            var urls = new List<string>();
+            var itemsList = new List<RemoteItem>();
             try
             {
                 string fullUrl = _baseUrl.TrimEnd('/') + "/" + _controlUrl.TrimStart('/');
@@ -199,14 +200,20 @@ namespace LocalStreamPC
                         if (resultNode != null)
                         {
                             var doc = XDocument.Parse(resultNode.Value);
-                            var items = doc.Descendants().Where(e => e.Name.LocalName == "item");
+                            var xmlItems = doc.Descendants().Where(e => e.Name.LocalName == "item");
 
-                            foreach (var i in items)
+                            foreach (var i in xmlItems)
                             {
                                 var res = i.Elements().FirstOrDefault(e => e.Name.LocalName == "res");
+                                var title = i.Elements().FirstOrDefault(e => e.Name.LocalName == "title")?.Value ?? "Unknown File";
+
                                 if (res != null && !string.IsNullOrEmpty(res.Value))
                                 {
-                                    urls.Add(res.Value);
+                                    itemsList.Add(new RemoteItem
+                                    {
+                                        Url = res.Value,
+                                        Title = title
+                                    });
                                 }
                             }
                         }
@@ -217,7 +224,7 @@ namespace LocalStreamPC
             {
                 this.Title = $"❌ Fetch Error: {ex.Message}";
             }
-            return urls;
+            return itemsList;
         }
 
         private async void BtnPlayAll_Click(object sender, RoutedEventArgs e)
@@ -226,12 +233,13 @@ namespace LocalStreamPC
             if (loading != null) loading.IsVisible = true;
             this.Title = "⏳ Fetching all files...";
 
-            var urls = await FetchRecursiveUrlsAsync(_currentContainer);
+            // Now returns RemoteItem objects with titles
+            var items = await FetchRecursiveUrlsAsync(_currentContainer);
 
-            if (urls.Count > 0)
+            if (items.Count > 0)
             {
-                this.Title = $"▶ Playing {urls.Count} files...";
-                PlayUrlsInVlc(urls);
+                this.Title = $"▶ Playing {items.Count} files...";
+                PlayUrlsInVlc(items);
             }
             else
             {
@@ -253,27 +261,25 @@ namespace LocalStreamPC
             if (loading != null) loading.IsVisible = true;
             this.Title = "⏳ Gathering selection...";
 
-            var finalUrls = new List<string>();
+            var finalItems = new List<RemoteItem>();
 
             foreach (RemoteItem item in list.SelectedItems)
             {
                 if (item.IsFolder)
                 {
-                    // If Folder -> Fetch Recursive content
-                    var folderUrls = await FetchRecursiveUrlsAsync(item.Id);
-                    finalUrls.AddRange(folderUrls);
+                    var folderItems = await FetchRecursiveUrlsAsync(item.Id);
+                    finalItems.AddRange(folderItems);
                 }
                 else if (!string.IsNullOrEmpty(item.Url))
                 {
-                    // If File -> Add directly
-                    finalUrls.Add(item.Url);
+                    finalItems.Add(item);
                 }
             }
 
-            if (finalUrls.Count > 0)
+            if (finalItems.Count > 0)
             {
-                this.Title = $"▶ Playing {finalUrls.Count} items...";
-                PlayUrlsInVlc(finalUrls);
+                this.Title = $"▶ Playing {finalItems.Count} items...";
+                PlayUrlsInVlc(finalItems);
             }
             else
             {
@@ -283,35 +289,62 @@ namespace LocalStreamPC
             if (loading != null) loading.IsVisible = false;
         }
 
-        private void PlayUrlsInVlc(List<string> urls)
+        // Change the method signature to accept an optional 'title'
+        // CHANGE: Now accepts List<RemoteItem> to access titles
+        private void PlayUrlsInVlc(List<RemoteItem> items)
         {
-            StringBuilder args = new StringBuilder();
-            foreach (var url in urls)
+            if (items == null || items.Count == 0) return;
+
+            // 1. Generate M3U Playlist Content
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("#EXTM3U");
+
+            foreach (var item in items)
             {
-                args.Append($"\"{url}\" ");
+                // #EXTINF:-1,Movie Title
+                // http://url...
+                sb.AppendLine($"#EXTINF:-1,{item.Title}");
+                sb.AppendLine(item.Url);
             }
 
-            string vlcPath = "vlc";
+            // 2. Save to Temp File
+            string tempPlaylist = Path.Combine(Path.GetTempPath(), $"LocalStream_{DateTime.Now.Ticks}.m3u");
+            File.WriteAllText(tempPlaylist, sb.ToString());
 
+            // 3. Find VLC
+            string vlcPath = "vlc";
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
                 string[] paths = {
-                    @"C:\Program Files\VideoLAN\VLC\vlc.exe",
-                    @"C:\Program Files (x86)\VideoLAN\VLC\vlc.exe"
-                };
+            @"C:\Program Files\VideoLAN\VLC\vlc.exe",
+            @"C:\Program Files (x86)\VideoLAN\VLC\vlc.exe"
+        };
                 foreach (var p in paths) if (File.Exists(p)) { vlcPath = p; break; }
+
+                // Registry check (optional but good)
+                if (vlcPath == "vlc")
+                {
+                    try
+                    {
+                        using (var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SOFTWARE\VideoLAN\VLC"))
+                            if (key?.GetValue("InstallDir") is string dir)
+                                if (File.Exists(Path.Combine(dir, "vlc.exe"))) vlcPath = Path.Combine(dir, "vlc.exe");
+                    }
+                    catch { }
+                }
             }
             else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             {
                 vlcPath = "/Applications/VLC.app/Contents/MacOS/VLC";
             }
 
+            // 4. Launch VLC with the Playlist
             try
             {
                 Process.Start(new ProcessStartInfo
                 {
                     FileName = vlcPath,
-                    Arguments = args.ToString(),
+                    Arguments = $"\"{tempPlaylist}\"", // Pass the M3U file path
                     UseShellExecute = false
                 });
             }
@@ -344,7 +377,8 @@ namespace LocalStreamPC
                 }
                 else
                 {
-                    PlayUrlsInVlc(new List<string> { item.Url });
+                    // Create a single-item list
+                    PlayUrlsInVlc(new List<RemoteItem> { item });
                 }
             }
         }
@@ -382,12 +416,15 @@ namespace LocalStreamPC
 
         public async Task LoadThumbnailAsync()
         {
+            if (string.IsNullOrEmpty(ThumbnailUrl)) return;
+
             try
             {
                 using (var client = new HttpClient())
                 {
-                    client.Timeout = TimeSpan.FromSeconds(3);
+                    client.Timeout = TimeSpan.FromSeconds(5); // Don't wait too long
                     var response = await client.GetAsync(ThumbnailUrl);
+
                     if (response.IsSuccessStatusCode)
                     {
                         var data = await response.Content.ReadAsByteArrayAsync();
@@ -399,7 +436,10 @@ namespace LocalStreamPC
                     }
                 }
             }
-            catch { }
+            catch
+            {
+                // If it fails, we just keep the default icon. No crash.
+            }
         }
 
         public event PropertyChangedEventHandler? PropertyChanged;

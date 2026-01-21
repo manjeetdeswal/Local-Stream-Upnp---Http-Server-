@@ -20,7 +20,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Xml.Linq;
 using TagLib; // For Audio Metadata
-using Xabe.FFmpeg; // For Video Snapshots
+using Xabe.FFmpeg;
+using File = System.IO.File; // For Video Snapshots
 
 // Note: You still need the "System.Drawing.Common" and "Microsoft.Win32.Registry" NuGet packages 
 // installed for the specific Windows logic to work, but the code guards against crashes on Linux.
@@ -31,7 +32,9 @@ namespace LocalStreamPC
     {
         private HttpListener _httpListener;
         private CancellationTokenSource _serverTokenSource;
-        private string _sharedPath = "";
+        private string _sharedPath => Config.SharedFolders.Count > 0
+                               ? Config.SharedFolders[0]
+                               : AppDomain.CurrentDomain.BaseDirectory;
         private bool _isServerRunning = false;
         private const int PORT = 8080;
         private static readonly string UDN = "uuid:" + Guid.NewGuid().ToString();
@@ -48,6 +51,7 @@ namespace LocalStreamPC
         {
             InitializeComponent();
             LoadConfig();
+            Xabe.FFmpeg.FFmpeg.SetExecutablesPath(AppDomain.CurrentDomain.BaseDirectory);
 
             string os = "win";
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux)) os = "linux";
@@ -171,7 +175,7 @@ namespace LocalStreamPC
                 var trayIcon = new TrayIcon
                 {
                     // This loads the icon from your project assets
-                    Icon = new WindowIcon(AssetLoader.Open(new Uri("avares://LocalStreamPC/Assets/avalonia-logo.ico"))),
+                    Icon = new WindowIcon(AssetLoader.Open(new Uri("avares://LocalStreamPC/Assets/app-icon.ico"))),
                     ToolTipText = "LocalStream Server",
                     IsVisible = true
                 };
@@ -417,9 +421,10 @@ namespace LocalStreamPC
             else Config = new AppConfig();
 
             // Ensure List is never null to prevent crashes
+            // Ensure list exists FIRST
             if (Config.SharedFolders == null) Config.SharedFolders = new List<string>();
 
-            // UI Bindings: Bind to the ListBox, NOT the old TextBox
+            // THEN bind it
             ListSharedFolders.ItemsSource = null;
             ListSharedFolders.ItemsSource = Config.SharedFolders;
 
@@ -618,68 +623,51 @@ namespace LocalStreamPC
 
         private async void ServeThumbnail(HttpListenerContext context, string path)
         {
-            string fileName = "Unknown";
+            string fullPath = "";
             try
             {
-                string base64Param = path.Substring(6);
-                string fullPath = "";
+                // 1. Decode Path
+                string base64Param = path.Substring(7); // Removes "/thumb/"
+                fullPath = Encoding.UTF8.GetString(Convert.FromBase64String(base64Param));
 
-                try { fullPath = Encoding.UTF8.GetString(Convert.FromBase64String(base64Param)); }
-                catch { context.Response.StatusCode = 404; context.Response.Close(); return; }
-
-                // SECURITY: Ensure path is in our shared list
-                if (!Config.SharedFolders.Any(f => fullPath.StartsWith(f)) || !System.IO.File.Exists(fullPath))
+                if (!System.IO.File.Exists(fullPath))
                 {
+                    Log($"❌ Thumb 404: File not found {fullPath}");
                     context.Response.StatusCode = 404;
                     context.Response.Close();
                     return;
                 }
-                // --- CACHE LOGIC START ---
-                // Create a cache folder in the app directory
+
+                // 2. Check Cache
                 string cacheDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Cache");
                 if (!Directory.Exists(cacheDir)) Directory.CreateDirectory(cacheDir);
 
-                // Create a unique hash for the filename so we can find it later
-                string fileHash = Convert.ToBase64String(Encoding.UTF8.GetBytes(fileName)).Replace("/", "_").Replace("+", "-");
+                string fileHash = Convert.ToBase64String(Encoding.UTF8.GetBytes(fullPath)).Replace("/", "_").Replace("+", "-");
                 string cachedThumbPath = Path.Combine(cacheDir, fileHash + ".jpg");
 
-                // IF CACHE EXISTS, SERVE IT IMMEDIATELY (FAST!)
                 if (System.IO.File.Exists(cachedThumbPath))
                 {
                     byte[] cachedBytes = await System.IO.File.ReadAllBytesAsync(cachedThumbPath);
-                    context.Response.ContentType = "image/png";
+                    context.Response.ContentType = "image/jpeg";
                     context.Response.ContentLength64 = cachedBytes.Length;
                     context.Response.OutputStream.Write(cachedBytes, 0, cachedBytes.Length);
                     context.Response.Close();
                     return;
                 }
-                // --- CACHE LOGIC END ---
 
+                // 3. Generate New Thumbnail
                 string ext = Path.GetExtension(fullPath).ToLower();
                 byte[] imageBytes = null;
 
-                // 1. IMAGES
+                // === IMAGES ===
                 if (new[] { ".jpg", ".jpeg", ".png", ".bmp", ".webp" }.Contains(ext))
                 {
-                    using (var stream = System.IO.File.OpenRead(fullPath))
+                    try
                     {
-                        var bitmap = Avalonia.Media.Imaging.Bitmap.DecodeToWidth(stream, 200);
-                        using (var outStream = new MemoryStream())
+                        // Try resizing first
+                        using (var stream = System.IO.File.OpenRead(fullPath))
                         {
-                            bitmap.Save(outStream);
-                            imageBytes = outStream.ToArray();
-                        }
-                    }
-                }
-                // 2. AUDIO
-                else if (new[] { ".mp3", ".flac", ".ogg", ".m4a" }.Contains(ext))
-                {
-                    var tfile = TagLib.File.Create(fullPath);
-                    if (tfile.Tag.Pictures.Length > 0)
-                    {
-                        using (var mem = new MemoryStream(tfile.Tag.Pictures[0].Data.Data))
-                        {
-                            var bitmap = Avalonia.Media.Imaging.Bitmap.DecodeToWidth(mem, 200);
+                            var bitmap = Avalonia.Media.Imaging.Bitmap.DecodeToWidth(stream, 200);
                             using (var outStream = new MemoryStream())
                             {
                                 bitmap.Save(outStream);
@@ -687,26 +675,43 @@ namespace LocalStreamPC
                             }
                         }
                     }
+                    catch (Exception ex)
+                    {
+                        Log($"⚠️ Image Resize Failed (Sending Original): {ex.Message}");
+                        // Fallback: Just send the original file if resizing crashes
+                        imageBytes = await System.IO.File.ReadAllBytesAsync(fullPath);
+                    }
                 }
-                // 3. VIDEO (Slow!)
+                // === AUDIO ===
+                else if (new[] { ".mp3", ".flac", ".ogg", ".m4a" }.Contains(ext))
+                {
+                    try
+                    {
+                        var tfile = TagLib.File.Create(fullPath);
+                        if (tfile.Tag.Pictures.Length > 0)
+                        {
+                            imageBytes = tfile.Tag.Pictures[0].Data.Data;
+                        }
+                    }
+                    catch { /* No Album Art found or file locked */ }
+                }
+                // === VIDEO ===
                 else if (new[] { ".mp4", ".mkv", ".avi", ".mov", ".webm" }.Contains(ext))
                 {
-                    await _thumbLock.WaitAsync(); // Lock
+                    await _thumbLock.WaitAsync();
                     try
                     {
                         string tempThumb = Path.Combine(Path.GetTempPath(), $"tmp_{Guid.NewGuid()}.jpg");
-
-                        // Log only if creating NEW thumb
-                        Log($"🎬 Generating NEW thumb: {Path.GetFileName(fileName)}");
-
+                        // Take snapshot at 5 seconds
                         var conversion = await FFmpeg.Conversions.FromSnippet.Snapshot(fullPath, tempThumb, TimeSpan.FromSeconds(5));
                         await conversion.Start();
 
                         if (System.IO.File.Exists(tempThumb))
                         {
+                            // Resize the snapshot to save bandwidth
                             using (var stream = System.IO.File.OpenRead(tempThumb))
                             {
-                                var bitmap = Avalonia.Media.Imaging.Bitmap.DecodeToWidth(stream, 200);
+                                var bitmap = Avalonia.Media.Imaging.Bitmap.DecodeToWidth(stream, 300);
                                 using (var outStream = new MemoryStream())
                                 {
                                     bitmap.Save(outStream);
@@ -716,27 +721,35 @@ namespace LocalStreamPC
                             System.IO.File.Delete(tempThumb);
                         }
                     }
-                    catch (Exception ex) { Log($"❌ FFmpeg Error: {ex.Message}"); }
-                    finally { _thumbLock.Release(); }
+                    catch (Exception ex)
+                    {
+                        Log($"❌ FFmpeg Error: {ex.Message}");
+                    }
+                    finally
+                    {
+                        _thumbLock.Release();
+                    }
                 }
 
+                // 4. Send Response
                 if (imageBytes != null)
                 {
-                    // SAVE TO CACHE FOR NEXT TIME
-                    await System.IO.File.WriteAllBytesAsync(cachedThumbPath, imageBytes);
+                    // Save to cache for next time
+                    try { await System.IO.File.WriteAllBytesAsync(cachedThumbPath, imageBytes); } catch { }
 
-                    context.Response.ContentType = "image/png";
+                    context.Response.ContentType = "image/jpeg";
                     context.Response.ContentLength64 = imageBytes.Length;
                     context.Response.OutputStream.Write(imageBytes, 0, imageBytes.Length);
                 }
                 else
                 {
+                    // No thumbnail available -> 404 (Client shows default icon)
                     context.Response.StatusCode = 404;
                 }
             }
             catch (Exception ex)
             {
-               
+                Log($"🔥 Critical Thumb Error: {ex.Message}");
                 context.Response.StatusCode = 500;
             }
             finally
@@ -803,161 +816,180 @@ namespace LocalStreamPC
 
         }
 
-        private void ServeWebBrowser(HttpListenerContext context, string relativePath)
+        private void ServeWebBrowser(HttpListenerContext context, string pathParam)
         {
-            if (relativePath.Contains("..") || Path.IsPathRooted(relativePath)) relativePath = "";
-            string currentPath = Path.Combine(_sharedPath, relativePath);
-            Log($"📂 Browsing Physical Path: '{currentPath}' (Exists: {Directory.Exists(currentPath)})");
+            // 1. Sanitize
+            if (pathParam.Contains("..")) pathParam = "";
 
-            if (!Directory.Exists(currentPath))
+            // 2. VIRTUAL ROOT: If path is empty, show Shared Folders
+            if (string.IsNullOrEmpty(pathParam))
+            {
+                var sb = new StringBuilder();
+                sb.Append("<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>");
+                sb.Append("<title>LocalStream Root</title>");
+                // Reuse styles
+                sb.Append("<style>body{font-family:'Segoe UI',sans-serif;background:#f0f2f5;padding:20px} .item{background:white;padding:15px;margin-bottom:10px;border-radius:8px;display:flex;align-items:center;gap:15px;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,0.1)} .item:hover{background:#fff} .icon{font-size:1.5em} a{text-decoration:none;color:#333;font-weight:600;flex-grow:1}</style>");
+                sb.Append("</head><body>");
+
+                sb.Append("<h1>📡 Shared Libraries</h1>");
+
+                foreach (var folder in Config.SharedFolders)
+                {
+                    if (!Directory.Exists(folder)) continue;
+                    var info = new DirectoryInfo(folder);
+                    string link = $"/?path={WebUtility.UrlEncode(folder)}";
+
+                    sb.Append($"<div class='item' onclick=\"window.location='{link}'\">");
+                    sb.Append("<span class='icon'>💽</span>");
+                    sb.Append($"<a href='{link}'>{info.Name}</a>");
+                    sb.Append($"<span style='color:#888;font-size:0.8em'>{folder}</span>");
+                    sb.Append("</div>");
+                }
+
+                if (Config.SharedFolders.Count == 0) sb.Append("<p>No folders shared. Add them in the Server App.</p>");
+
+                sb.Append("</body></html>");
+
+                byte[] b = Encoding.UTF8.GetBytes(sb.ToString());
+                context.Response.ContentType = "text/html; charset=utf-8";
+                context.Response.ContentLength64 = b.Length;
+                context.Response.OutputStream.Write(b, 0, b.Length);
+                context.Response.Close();
+                return;
+            }
+
+            // 3. NORMAL BROWSING
+            string currentPath = pathParam;
+            bool isAllowed = Config.SharedFolders.Any(root => currentPath.StartsWith(root, StringComparison.OrdinalIgnoreCase));
+
+            if (!isAllowed || !Directory.Exists(currentPath))
             {
                 context.Response.StatusCode = 404;
                 context.Response.Close();
                 return;
             }
 
-            var sb = new StringBuilder();
-            sb.Append("<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>");
-            sb.Append("<title>LocalStream Browser</title>");
-            sb.Append("<style>");
+            var html = new StringBuilder();
+            html.Append("<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>");
+            html.Append($"<title>{new DirectoryInfo(currentPath).Name}</title>");
+            html.Append("<style>");
 
-            // --- CORE STYLES ---
-            sb.Append("body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; margin: 0; padding: 20px; padding-bottom: 80px; }");
-            sb.Append(".header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }");
-            sb.Append("h1 { margin: 0; color: #333; font-size: 1.5rem; word-break: break-all; }");
-            sb.Append(".btn { padding: 8px 15px; border: none; border-radius: 5px; cursor: pointer; font-weight: 500; text-decoration: none; color: white; display: inline-flex; align-items: center; justify-content: center; gap: 5px; }");
-            sb.Append(".btn-primary { background: #007bff; } .btn-primary:hover { background: #0056b3; }");
-            sb.Append(".btn-secondary { background: #6c757d; } .btn-secondary:hover { background: #545b62; }");
-            sb.Append(".btn-success { background: #28a745; } .btn-success:hover { background: #218838; }");
-            sb.Append(".btn-action { padding: 5px 10px; font-size: 0.8em; }");
+            // CSS STYLES
+            html.Append("body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; margin: 0; padding: 20px; padding-bottom: 80px; }");
+            html.Append(".header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }");
+            html.Append("h1 { margin: 0; color: #333; font-size: 1.5rem; word-break: break-all; }");
+            html.Append(".btn { padding: 8px 15px; border: none; border-radius: 5px; cursor: pointer; font-weight: 500; text-decoration: none; color: white; display: inline-flex; align-items: center; justify-content: center; gap: 5px; }");
+            html.Append(".btn-primary { background: #007bff; } .btn-primary:hover { background: #0056b3; }");
+            html.Append(".btn-secondary { background: #6c757d; } .btn-secondary:hover { background: #545b62; }");
+            html.Append(".btn-success { background: #28a745; } .btn-success:hover { background: #218838; }");
+            html.Append(".container { display: flex; flex-direction: column; gap: 10px; }");
+            html.Append(".grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 15px; }");
+            html.Append(".item { background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); overflow: hidden; transition: transform 0.2s; position: relative; }");
+            html.Append(".item:hover { background: #f9f9f9; box-shadow: 0 4px 8px rgba(0,0,0,0.15); }");
+            html.Append(".checkbox { z-index: 10; cursor: pointer; }");
 
-            // --- LAYOUT ---
-            sb.Append(".container { display: flex; flex-direction: column; gap: 10px; }");
-            sb.Append(".grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 15px; }");
+            // View Specific Styles
+            html.Append(".list .item { display: flex; align-items: center; padding: 10px; gap: 15px; }");
+            html.Append(".list .preview-box { display: none !important; }");
+            html.Append(".list .icon { font-size: 1.5em; width: 40px; text-align: center; }");
+            html.Append(".list .details { flex-grow: 1; display: flex; align-items: center; justify-content: space-between; overflow: hidden; }");
+            html.Append(".list .actions { display: flex; gap: 5px; margin-left: 10px; }");
 
-            // --- ITEM STYLES ---
-            sb.Append(".item { background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); overflow: hidden; transition: transform 0.2s; position: relative; }");
-            sb.Append(".item:hover { background: #f9f9f9; box-shadow: 0 4px 8px rgba(0,0,0,0.15); }");
-            sb.Append(".checkbox { z-index: 10; cursor: pointer; }");
+            html.Append(".grid .item { display: flex; flex-direction: column; aspect-ratio: 3/4; }");
+            html.Append(".grid .list-only { display: none !important; }");
+            html.Append(".grid .checkbox { position: absolute; top: 8px; left: 8px; width: 20px; height: 20px; }");
+            html.Append(".grid .preview-box { flex-grow: 1; background: #eee; display: flex; justify-content: center; align-items: center; font-size: 3em; background-size: cover; background-position: center; }");
+            html.Append(".grid .details { padding: 10px; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid #eee; }");
+            html.Append(".grid .actions { display: flex; gap: 5px; margin-top: auto; }");
+            html.Append(".grid .actions .btn { flex: 1; }");
 
-            // --- VIEW SPECIFIC ---
-            // List View
-            sb.Append(".list .item { display: flex; align-items: center; padding: 10px; gap: 15px; }");
-            sb.Append(".list .preview-box { display: none !important; }");
-            sb.Append(".list .icon { font-size: 1.5em; width: 40px; text-align: center; }");
-            sb.Append(".list .details { flex-grow: 1; display: flex; align-items: center; justify-content: space-between; overflow: hidden; }");
-            sb.Append(".list .actions { display: flex; gap: 5px; margin-left: 10px; }");
+            html.Append(".name { text-decoration: none; color: #333; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }");
+            html.Append(".meta { color: #888; font-size: 0.85em; }");
+            html.Append("</style>");
 
-            // Grid View
-            sb.Append(".grid .item { display: flex; flex-direction: column; aspect-ratio: 3/4; }");
-            sb.Append(".grid .list-only { display: none !important; }");
-            sb.Append(".grid .checkbox { position: absolute; top: 8px; left: 8px; width: 20px; height: 20px; }");
-            sb.Append(".grid .preview-box { flex-grow: 1; background: #eee; display: flex; justify-content: center; align-items: center; font-size: 3em; background-size: cover; background-position: center; }");
-            // ✅ FIX: Grid details column layout
-            sb.Append(".grid .details { padding: 10px; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid #eee; }");
-            // ✅ FIX: Buttons at bottom full width
-            sb.Append(".grid .actions { display: flex; gap: 5px; margin-top: auto; }");
-            sb.Append(".grid .actions .btn { flex: 1; }");
+            // JS SCRIPTS
+            html.Append("<script>");
+            html.Append("function toggleView() { var c = document.getElementById('container'); var isGrid = c.classList.contains('grid'); c.className = isGrid ? 'container list' : 'container grid'; localStorage.setItem('viewMode', isGrid ? 'list' : 'grid'); }");
+            html.Append("function updateSelection() { var count = document.querySelectorAll('.file-check:checked').length; var bar = document.getElementById('selectionBar'); bar.style.display = count > 0 ? 'flex' : 'none'; document.getElementById('selCount').innerText = count + ' selected'; }");
+            html.Append("function downloadSelected() { var checks = document.querySelectorAll('.file-check:checked'); var files = []; checks.forEach(c => files.push(c.value)); if(files.length===0) return; window.location = '/zip?path=" + WebUtility.UrlEncode(currentPath) + "&files=' + encodeURIComponent(files.join('|')); }");
+            html.Append("function downloadAll() { window.location = '/zip?path=" + WebUtility.UrlEncode(currentPath) + "'; }");
+            html.Append("function uploadFiles() { document.getElementById('fileInput').click(); }");
+            html.Append("function handleUpload(input) { if(input.files.length === 0) return; var formData = new FormData(); for(var i=0; i<input.files.length; i++) formData.append('files', input.files[i]); fetch('/upload?path=" + WebUtility.UrlEncode(currentPath) + "', {method:'POST', body:formData}).then(r => window.location.reload()).catch(e => alert('Upload failed')); }");
+            html.Append("window.onload = function() { var mode = localStorage.getItem('viewMode') || 'list'; document.getElementById('container').className = 'container ' + mode; };");
+            html.Append("</script></head><body>");
 
-            // Text Styles
-            sb.Append(".name { text-decoration: none; color: #333; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }");
-            sb.Append(".meta { color: #888; font-size: 0.85em; }");
+            // HEADER
+            string folderName = new DirectoryInfo(currentPath).Name;
+            html.Append("<div class='header'>");
+            html.Append($"<h1>📂 {folderName}</h1>");
+            html.Append("<div style='display:flex; gap:10px'>");
+            html.Append("<input type='file' id='fileInput' multiple style='display:none' onchange='handleUpload(this)'>");
+            html.Append("<button class='btn btn-success' onclick='uploadFiles()'>⬆️ Upload</button>");
+            html.Append("<button class='btn btn-primary' onclick='downloadAll()'>📦 Zip</button>");
+            html.Append("<button class='btn btn-secondary' onclick='toggleView()'>👁 View</button>");
+            html.Append("</div></div>");
 
-            sb.Append("</style><script>");
-            sb.Append("function toggleView() { var c = document.getElementById('container'); var isGrid = c.classList.contains('grid'); c.className = isGrid ? 'container list' : 'container grid'; localStorage.setItem('viewMode', isGrid ? 'list' : 'grid'); }");
-            sb.Append("function updateSelection() { var count = document.querySelectorAll('.file-check:checked').length; var bar = document.getElementById('selectionBar'); bar.style.display = count > 0 ? 'flex' : 'none'; document.getElementById('selCount').innerText = count + ' selected'; }");
-            sb.Append("function downloadSelected() { var checks = document.querySelectorAll('.file-check:checked'); var files = []; checks.forEach(c => files.push(c.value)); if(files.length===0) return; window.location = '/zip?path=" + WebUtility.UrlEncode(relativePath) + "&files=' + encodeURIComponent(files.join('|')); }");
-            sb.Append("function downloadAll() { window.location = '/zip?path=" + WebUtility.UrlEncode(relativePath) + "'; }");
-            sb.Append("function uploadFiles() { document.getElementById('fileInput').click(); }");
-            sb.Append("function handleUpload(input) { if(input.files.length === 0) return; var formData = new FormData(); for(var i=0; i<input.files.length; i++) formData.append('files', input.files[i]); fetch('/upload?path=" + WebUtility.UrlEncode(relativePath) + "', {method:'POST', body:formData}).then(r => window.location.reload()).catch(e => alert('Upload failed')); }");
-            sb.Append("window.onload = function() { var mode = localStorage.getItem('viewMode') || 'list'; document.getElementById('container').className = 'container ' + mode; };");
-            sb.Append("</script></head><body>");
+            html.Append("<div id='container' class='container list'>");
 
-            // --- HEADER ---
-            string displayPath = string.IsNullOrEmpty(relativePath) ? "Root" : relativePath;
-            sb.Append("<div class='header'>");
-            sb.Append($"<h1>📂 {displayPath}</h1>");
-            sb.Append("<div style='display:flex; gap:10px'>");
-            sb.Append("<input type='file' id='fileInput' multiple style='display:none' onchange='handleUpload(this)'>");
-            sb.Append("<button class='btn btn-success' onclick='uploadFiles()'>⬆️ Upload</button>");
-            sb.Append("<button class='btn btn-primary' onclick='downloadAll()'>📦 Download All (Zip)</button>");
-            sb.Append("<button class='btn btn-secondary' onclick='toggleView()'>👁 Grid/List</button>");
-            sb.Append("</div></div>");
+            // --- FIX: UP BUTTON (Now matches Folder layout) ---
+            string parent = Path.GetDirectoryName(currentPath);
+            bool parentIsAllowed = parent != null && Config.SharedFolders.Any(root => parent.StartsWith(root));
+            string upLink = parentIsAllowed ? $"/?path={WebUtility.UrlEncode(parent)}" : "/";
 
-            sb.Append("<div id='container' class='container list'>");
+            html.Append($"<div class='item' onclick=\"window.location='{upLink}'\">");
+            // Standard Structure: Preview Box + List Icon + Details
+            html.Append("<div class='preview-box'>⬆️</div>");
+            html.Append("<span class='list-only icon'>⬆️</span>");
+            html.Append("<div class='details'><div><a class='name'>..</a><span class='meta'>Go Up</span></div></div>");
+            html.Append("</div>");
+            // --------------------------------------------------
 
-            // 1. UP BUTTON
-            if (!string.IsNullOrEmpty(relativePath))
-            {
-                string parent = Path.GetDirectoryName(relativePath)?.Replace('\\', '/') ?? "";
-                string link = string.IsNullOrEmpty(parent) ? "/" : $"/?path={WebUtility.UrlEncode(parent)}";
-
-                sb.Append($"<div class='item' onclick=\"window.location='{link}'\" style='cursor:pointer'>");
-                sb.Append("<div class='grid-only preview-box'>⬆️</div>");
-                sb.Append("<span class='list-only icon'>⬆️</span>");
-                sb.Append("<div class='details' style='justify-content:flex-start'><a class='name'>.. (Go Up)</a></div>");
-                sb.Append("</div>");
-            }
-
-            // 2. FOLDERS
+            // SUB-FOLDERS
             foreach (var dir in Directory.GetDirectories(currentPath))
             {
-                var dirInfo = new DirectoryInfo(dir);
-                string childRel = string.IsNullOrEmpty(relativePath) ? dirInfo.Name : Path.Combine(relativePath, dirInfo.Name);
-                string link = $"/?path={WebUtility.UrlEncode(childRel.Replace('\\', '/'))}";
+                var info = new DirectoryInfo(dir);
+                string link = $"/?path={WebUtility.UrlEncode(dir)}";
 
-                sb.Append($"<div class='item' onclick=\"window.location='{link}'\" style='cursor:pointer'>");
-                sb.Append("<div class='preview-box'>📁</div>");
-                sb.Append("<span class='list-only icon'>📁</span>");
-
-                // ✅ FIX: Correct variable usage with $
-                sb.Append("<div class='details'>");
-                sb.Append($"<div style='flex-grow:1'><a class='name'>{dirInfo.Name}</a><span class='meta'>Folder</span></div>");
-                sb.Append("</div>");
-                sb.Append("</div>");
+                html.Append($"<div class='item' onclick=\"window.location='{link}'\">");
+                html.Append("<div class='preview-box'>📁</div><span class='list-only icon'>📁</span>");
+                html.Append($"<div class='details'><div><a class='name'>{info.Name}</a><span class='meta'>Folder</span></div></div>");
+                html.Append("</div>");
             }
 
-            // 3. FILES
+            // FILES
             foreach (var file in Directory.GetFiles(currentPath))
             {
                 var info = new FileInfo(file);
-                string fileRel = string.IsNullOrEmpty(relativePath) ? info.Name : Path.Combine(relativePath, info.Name);
-                string url = $"/file/{WebUtility.UrlEncode(fileRel.Replace('\\', '/'))}";
+                string fullPathB64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(file));
+                string url = $"/file/{fullPathB64}";
+                string thumbUrl = $"/thumb/{fullPathB64}";
                 string icon = GetFileIcon(info.Extension);
-                bool isImage = GetMimeType(info.Extension).StartsWith("image");
-                string bgStyle = isImage ? $"style=\"background-image: url('{url}');\"" : "";
+                bool isMedia = IsMediaFile(info.Name);
+                string bgStyle = isMedia ? $"style=\"background-image: url('{thumbUrl}');\"" : "";
 
-                sb.Append("<div class='item'>");
-                // Checkbox
-                sb.Append($"<input type='checkbox' class='checkbox file-check' value='{WebUtility.UrlEncode(info.Name)}' onclick='event.stopPropagation(); updateSelection()'>");
-
-                // Preview
-                sb.Append($"<div class='preview-box' {bgStyle}>{(!isImage ? icon : "")}</div>");
-                sb.Append($"<span class='list-only icon'>{icon}</span>");
-
-                // Details & Actions
-                sb.Append("<div class='details'>");
-                sb.Append($"<div style='flex-grow:1; min-width:0;'><a href='{url}' target='_blank' class='name'>{info.Name}</a><span class='meta'>{FormatSize(info.Length)}</span></div>");
-
-                // ✅ FIX: Buttons now separate and styled for grid bottom
-                sb.Append("<div class='actions'>");
-                sb.Append($"<a href='{url}' target='_blank' class='btn btn-primary btn-action' title='Play'>▶</a>");
-                sb.Append($"<a href='{url}' download class='btn btn-secondary btn-action' title='Download'>⬇</a>");
-                sb.Append("</div>");
-
-                sb.Append("</div></div>");
+                html.Append("<div class='item'>");
+                html.Append($"<input type='checkbox' class='checkbox file-check' value='{WebUtility.UrlEncode(info.Name)}' onclick='event.stopPropagation(); updateSelection()'>");
+                html.Append($"<div class='preview-box' {bgStyle}>{(!isMedia ? icon : "")}</div>");
+                html.Append($"<span class='list-only icon'>{icon}</span>");
+                html.Append("<div class='details'>");
+                html.Append($"<div style='flex-grow:1; min-width:0;'><a href='{url}' target='_blank' class='name'>{info.Name}</a><span class='meta'>{FormatSize(info.Length)}</span></div>");
+                html.Append("<div class='actions'>");
+                html.Append($"<a href='{url}' target='_blank' class='btn btn-primary btn-action'>▶</a>");
+                html.Append($"<a href='{url}' download class='btn btn-secondary btn-action'>⬇</a>");
+                html.Append("</div></div></div>");
             }
-            sb.Append("</div>"); // End container
 
-            // --- SELECTION BAR ---
-            sb.Append("<div id='selectionBar' style='position:fixed; bottom:0; left:0; right:0; background:#333; color:white; padding:15px; display:none; justify-content:space-between; align-items:center; box-shadow:0 -2px 10px rgba(0,0,0,0.2);'>");
-            sb.Append("<span id='selCount' style='font-weight:bold'>0 selected</span>");
-            sb.Append("<button class='btn btn-success' onclick='downloadSelected()'>📦 Download Selected (Zip)</button>");
-            sb.Append("</div>");
+            html.Append("</div>"); // End Container
 
-            sb.Append("</body></html>");
+            // Selection Bar
+            html.Append("<div id='selectionBar' style='position:fixed; bottom:0; left:0; right:0; background:#333; color:white; padding:15px; display:none; justify-content:space-between; align-items:center; box-shadow:0 -2px 10px rgba(0,0,0,0.2);'>");
+            html.Append("<span id='selCount' style='font-weight:bold'>0 selected</span>");
+            html.Append("<button class='btn btn-success' onclick='downloadSelected()'>📦 Download Selected</button>");
+            html.Append("</div>");
 
-            byte[] buffer = Encoding.UTF8.GetBytes(sb.ToString());
+            html.Append("</body></html>");
+
+            byte[] buffer = Encoding.UTF8.GetBytes(html.ToString());
             context.Response.ContentType = "text/html; charset=utf-8";
             context.Response.ContentLength64 = buffer.Length;
             context.Response.OutputStream.Write(buffer, 0, buffer.Length);
@@ -969,31 +1001,60 @@ namespace LocalStreamPC
         {
             try
             {
-                string relativePath = context.Request.QueryString["path"] ?? "";
-                if (relativePath.Contains("..")) relativePath = "";
-                string targetFolder = Path.Combine(_sharedPath, relativePath);
+                // 1. Get the Absolute Path from the Browser
+                string pathParam = context.Request.QueryString["path"] ?? "";
 
+                // 2. Security: Validate Path
+                if (string.IsNullOrEmpty(pathParam) || pathParam.Contains(".."))
+                {
+                    Log("⚠️ Upload blocked: Invalid path.");
+                    context.Response.StatusCode = 400;
+                    context.Response.Close();
+                    return;
+                }
+
+                // 3. Security: Ensure the path is actually inside a Shared Folder
+                // This prevents people from uploading to C:\Windows or other unshared places
+                bool isAllowed = Config.SharedFolders.Any(root => pathParam.StartsWith(root, StringComparison.OrdinalIgnoreCase));
+
+                if (!isAllowed)
+                {
+                    Log($"⚠️ Upload blocked: '{pathParam}' is not a shared folder.");
+                    context.Response.StatusCode = 403; // Forbidden
+                    context.Response.Close();
+                    return;
+                }
+
+                string targetFolder = pathParam;
+
+                if (!Directory.Exists(targetFolder))
+                {
+                    context.Response.StatusCode = 404;
+                    context.Response.Close();
+                    return;
+                }
+
+                // 4. Handle Multipart Data
                 string contentType = context.Request.ContentType;
                 if (contentType != null && contentType.Contains("multipart/form-data"))
                 {
-                    // Simple Multipart Parsing
+                    // Extract Boundary
                     string boundary = contentType.Split(new[] { "boundary=" }, StringSplitOptions.None)[1];
+                    // Remove quotes if present
+                    boundary = boundary.Trim('"');
                     byte[] boundaryBytes = Encoding.ASCII.GetBytes("--" + boundary);
 
                     using (var ms = new MemoryStream())
                     {
+                        // Note: Copying entire stream to memory is fine for small files (images/songs).
+                        // For very large video uploads (>500MB), this might use too much RAM.
                         context.Request.InputStream.CopyTo(ms);
                         byte[] data = ms.ToArray();
 
-                        // Note: This is a basic parser. Production apps should use a library like HttpMultipartParser.
-                        // Here we just save the raw body to a file named "Upload_[Timestamp]" if complex parsing fails,
-                        // but let's try a simple split.
+                        Log($"📥 Upload received ({FormatSize(data.Length)}). Processing...");
 
-                        // For simplicity in this single-file sample, we will iterate the raw stream
-                        // In a real scenario, use a proper Multipart parser library.
-                        Log($"📥 Upload received ({data.Length} bytes). Saving to {targetFolder}");
-
-                        // Attempt to extract filename (Naive approach)
+                        // Find Filename
+                        // We peek at the first 2KB of headers to find the name
                         string rawStr = Encoding.UTF8.GetString(data.Take(2000).ToArray());
                         string filename = "Upload_" + DateTime.Now.Ticks + ".bin";
 
@@ -1004,38 +1065,55 @@ namespace LocalStreamPC
                             filename = rawStr.Substring(start, end - start);
                         }
 
-                        // Locate content start (double CRLF)
-                        // This simplistic parser assumes one file per request for robustness in this snippet
-                        int headerEnd = IndexOf(data, new byte[] { 13, 10, 13, 10 }); // \r\n\r\n
+                        // Locate Content Start (Double Newline: \r\n\r\n)
+                        int headerEnd = IndexOf(data, new byte[] { 13, 10, 13, 10 });
 
                         if (headerEnd > 0)
                         {
                             int contentStart = headerEnd + 4;
-                            // Find end boundary
-                            int contentEnd = data.Length - boundaryBytes.Length - 4; // approximate
+                            // Find end boundary (approximate)
+                            int contentEnd = data.Length - boundaryBytes.Length - 4;
 
-                            // Write file
+                            // 5. Save the File
                             string savePath = Path.Combine(targetFolder, filename);
+
+                            // Prevent overwriting existing files
+                            if (File.Exists(savePath))
+                            {
+                                string nameNoExt = Path.GetFileNameWithoutExtension(filename);
+                                string ext = Path.GetExtension(filename);
+                                savePath = Path.Combine(targetFolder, $"{nameNoExt}_{DateTime.Now.Ticks}{ext}");
+                            }
+
                             using (var fs = new FileStream(savePath, FileMode.Create))
                             {
-                                fs.Write(data, contentStart, contentEnd - contentStart);
+                                // Calculate length carefully to avoid crash if boundary detection is slightly off
+                                int length = Math.Max(0, contentEnd - contentStart);
+                                if (length > 0)
+                                {
+                                    fs.Write(data, contentStart, length);
+                                    Log($"✅ Saved: {filename}");
+                                }
                             }
-                            Log($"✅ Saved: {filename}");
                         }
                     }
+                    context.Response.StatusCode = 200;
                 }
-
-                context.Response.StatusCode = 200;
-                context.Response.Close();
+                else
+                {
+                    context.Response.StatusCode = 415; // Unsupported Media Type
+                }
             }
             catch (Exception ex)
             {
-                Log("Upload Error: " + ex.Message);
+                Log($"🔥 Upload Error: {ex.Message}");
                 context.Response.StatusCode = 500;
+            }
+            finally
+            {
                 context.Response.Close();
             }
         }
-
         private int IndexOf(byte[] src, byte[] pattern)
         {
             int max = src.Length - pattern.Length;
@@ -1058,11 +1136,17 @@ namespace LocalStreamPC
         {
             try
             {
-                string relativePath = context.Request.QueryString["path"] ?? "";
-                if (relativePath.Contains("..")) relativePath = "";
-                string sourceFolder = Path.Combine(_sharedPath, relativePath);
+                string pathParam = context.Request.QueryString["path"] ?? "";
+                if (string.IsNullOrEmpty(pathParam) || pathParam.Contains("..")) return;
 
-                string filesParam = context.Request.QueryString["files"]; // "file1.txt|file2.jpg"
+                // Security Check
+                if (!Config.SharedFolders.Any(root => pathParam.StartsWith(root, StringComparison.OrdinalIgnoreCase)))
+                {
+                    context.Response.StatusCode = 403; context.Response.Close(); return;
+                }
+
+                string sourceFolder = pathParam; // It is now the full path
+                string filesParam = context.Request.QueryString["files"];
                 string[] selectedFiles = string.IsNullOrEmpty(filesParam) ? null : WebUtility.UrlDecode(filesParam).Split('|');
 
                 context.Response.ContentType = "application/zip";
@@ -1072,23 +1156,16 @@ namespace LocalStreamPC
                 {
                     var filesToZip = selectedFiles != null
                         ? selectedFiles.Select(f => Path.Combine(sourceFolder, f)).Where(System.IO.File.Exists)
-                        : Directory.GetFiles(sourceFolder); // If no specific files, zip all
+                        : Directory.GetFiles(sourceFolder);
 
                     foreach (var filePath in filesToZip)
                     {
-                        var entryName = Path.GetFileName(filePath);
-                        zipArchive.CreateEntryFromFile(filePath, entryName);
+                        zipArchive.CreateEntryFromFile(filePath, Path.GetFileName(filePath));
                     }
                 }
                 context.Response.Close();
-                Log("📦 Served ZIP download");
             }
-            catch (Exception ex)
-            {
-                Log("Zip Error: " + ex.Message);
-                context.Response.StatusCode = 500;
-                context.Response.Close();
-            }
+            catch { context.Response.Close(); }
         }
 
         // ================= HELPERS & UPNP (Unchanged Logic) ================= //
@@ -1101,22 +1178,29 @@ namespace LocalStreamPC
             try { fullPath = Encoding.UTF8.GetString(Convert.FromBase64String(base64Param)); }
             catch { context.Response.StatusCode = 404; context.Response.Close(); return; }
 
-            // SECURITY: Ensure path is in our shared list
             if (!Config.SharedFolders.Any(f => fullPath.StartsWith(f)) || !System.IO.File.Exists(fullPath))
             {
                 context.Response.StatusCode = 404;
                 context.Response.Close();
                 return;
             }
+
             FileInfo fileInfo = new FileInfo(fullPath);
             long fileSize = fileInfo.Length;
             string mimeType = GetMimeType(fileInfo.Extension);
 
             context.Response.ContentType = mimeType;
+
+            // --- ADD THIS LINE TO FIX VLC TITLES ---
+            // This tells VLC: "Don't use the URL, use this real filename instead"
+            context.Response.AddHeader("Content-Disposition", $"inline; filename=\"{fileInfo.Name}\"");
+            // ---------------------------------------
+
             context.Response.AddHeader("transferMode.dlna.org", "Streaming");
             context.Response.AddHeader("contentFeatures.dlna.org", "DLNA.ORG_OP=01;DLNA.ORG_FLAGS=01700000000000000000000000000000");
             context.Response.AddHeader("Accept-Ranges", "bytes");
 
+            // ... (Keep the rest of the method exactly the same) ...
             string rangeHeader = context.Request.Headers["Range"];
             long start = 0, end = fileSize - 1;
 
@@ -1149,7 +1233,7 @@ namespace LocalStreamPC
                 catch { }
             }
             context.Response.Close();
-            
+            Log($"▶️ Served: {fileInfo.Name}");
         }
 
         private bool IsMediaFile(string filename)

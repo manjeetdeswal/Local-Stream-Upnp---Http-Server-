@@ -1,3 +1,13 @@
+You are absolutely right.
+
+The Code Blocks: They weren't rendering as code because of subtle formatting issues in the previous Markdown block. I will ensure they use distinct, correctly spaced triple backticks (```).
+
+The Broken Image: The "Made with Love" badge URL contained a raw emoji character that GitHub's image proxy sometimes fails to load. I have replaced it with a URL-encoded version that works reliably.
+
+Here is the corrected, ready-to-paste README.md.
+
+Markdown
+
 <div align="center">
 
   <h1>📡 LocalStream</h1>
@@ -7,14 +17,14 @@
   </p>
 
   <p>
-    <a href="https://dotnet.microsoft.com/">
-      <img src="https://img.shields.io/badge/.NET-8.0-512BD4?style=flat&logo=dotnet" alt=".NET 8" />
+    <a href="[https://dotnet.microsoft.com/](https://dotnet.microsoft.com/)">
+      <img src="[https://img.shields.io/badge/.NET-8.0-512BD4?style=flat&logo=dotnet](https://img.shields.io/badge/.NET-8.0-512BD4?style=flat&logo=dotnet)" alt=".NET 8" />
     </a>
-    <a href="https://avaloniaui.net/">
-      <img src="https://img.shields.io/badge/UI-Avalonia-AF1859?style=flat" alt="Avalonia UI" />
+    <a href="[https://avaloniaui.net/](https://avaloniaui.net/)">
+      <img src="[https://img.shields.io/badge/UI-Avalonia-AF1859?style=flat](https://img.shields.io/badge/UI-Avalonia-AF1859?style=flat)" alt="Avalonia UI" />
     </a>
-    <img src="https://img.shields.io/badge/Platform-Win%20%7C%20Linux%20%7C%20Mac%20%7C%20Android-lightgrey" alt="Platforms" />
-    <img src="https://img.shields.io/badge/License-MIT-green" alt="License" />
+    <img src="[https://img.shields.io/badge/Platform-Win%20%7C%20Linux%20%7C%20Mac%20%7C%20Android-lightgrey](https://img.shields.io/badge/Platform-Win%20%7C%20Linux%20%7C%20Mac%20%7C%20Android-lightgrey)" alt="Platforms" />
+    <img src="[https://img.shields.io/badge/License-MIT-green](https://img.shields.io/badge/License-MIT-green)" alt="License" />
   </p>
 
   <p>
@@ -26,10 +36,10 @@
   <br>
 
   <a href="#-downloads">
-    <img src="https://img.shields.io/badge/⬇_Download_App-3B82F6?style=for-the-badge&logo=windows" height="40">
+    <img src="[https://img.shields.io/badge/](https://img.shields.io/badge/)⬇_Download_App-3B82F6?style=for-the-badge&logo=windows" height="40">
   </a>
   <a href="#-how-to-use">
-    <img src="https://img.shields.io/badge/📖_Read_Guide-1F2937?style=for-the-badge&logo=readthedocs" height="40">
+    <img src="[https://img.shields.io/badge/](https://img.shields.io/badge/)📖_Read_Guide-1F2937?style=for-the-badge&logo=readthedocs" height="40">
   </a>
 
 </div>
@@ -142,7 +152,7 @@ To build this project yourself, you need the .NET 8 SDK.
 1. Clone & Setup
 Bash
 
-git clone [https://github.com/yourusername/LocalStream.git](https://github.com/yourusername/LocalStream.git)
+git clone https://github.com/yourusername/LocalStream.git
 cd LocalStream
 2. Add Binaries
 Create a Binaries folder in the project root and add ffmpeg / ffprobe executables for each OS:
@@ -155,14 +165,19 @@ Plaintext
     /linux (ffmpeg, ffprobe)  <-- No extension
     /mac   (ffmpeg, ffprobe)  <-- No extension
 3. Build Commands
+Windows
+
+PowerShell
+
+dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
+Linux
+
 Bash
 
-# Windows
-dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
-
-# Linux
 dotnet publish -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true
+macOS (Apple Silicon)
 
-# macOS (Apple Silicon)
+Bash
+
 dotnet publish -c Release -r osx-arm64 --self-contained true -p:PublishSingleFile=true
-<div align="center"> <p>Distributed under the <strong>MIT License</strong>.</p> <img src="https://www.google.com/search?q=https://img.shields.io/badge/Made%2520with-❤️-red" alt="Made with Love"> </div>
+<div align="center"> <p>Distributed under the <strong>MIT License</strong>.</p> <img src="https://img.shields.io/badge/Made%20with-%E2%9D%A4-red" alt="Made with Love"> </div>

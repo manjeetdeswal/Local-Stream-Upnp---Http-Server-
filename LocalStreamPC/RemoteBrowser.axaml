@@ -1,0 +1,152 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="using:LocalStreamPC"
+        mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="600"
+        x:Class="LocalStreamPC.RemoteBrowser"
+        Title="Remote Browser"
+        Background="{DynamicResource PageBackground}"
+        RequestedThemeVariant="Dark">
+
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Light">
+                    <SolidColorBrush x:Key="PageBackground">#F3F4F6</SolidColorBrush>
+                    <SolidColorBrush x:Key="CardBackground">White</SolidColorBrush>
+                    <SolidColorBrush x:Key="TextPrimary">#1F2937</SolidColorBrush>
+                    <SolidColorBrush x:Key="TextSecondary">#6B7280</SolidColorBrush>
+                    <SolidColorBrush x:Key="BorderBrush">#E5E7EB</SolidColorBrush>
+                    <SolidColorBrush x:Key="IconBg">#F7FAFC</SolidColorBrush>
+                    <SolidColorBrush x:Key="HoverBg">#EBF8FF</SolidColorBrush>
+                    <SolidColorBrush x:Key="SelectedBg">#BEE3F8</SolidColorBrush>
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Dark">
+                    <SolidColorBrush x:Key="PageBackground">#030712</SolidColorBrush>
+                    <SolidColorBrush x:Key="CardBackground">#1F2937</SolidColorBrush>
+                    <SolidColorBrush x:Key="TextPrimary">#F9FAFB</SolidColorBrush>
+                    <SolidColorBrush x:Key="TextSecondary">#9CA3AF</SolidColorBrush>
+                    <SolidColorBrush x:Key="BorderBrush">#374151</SolidColorBrush>
+                    <SolidColorBrush x:Key="IconBg">#374151</SolidColorBrush>
+                    <SolidColorBrush x:Key="HoverBg">#374151</SolidColorBrush>
+                    <SolidColorBrush x:Key="SelectedBg">#4B5563</SolidColorBrush>
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+        </ResourceDictionary>
+    </Window.Resources>
+
+    <Window.Styles>
+        <Style Selector="ListBoxItem">
+            <Setter Property="Padding" Value="5"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Margin" Value="0,2"/>
+        </Style>
+        <Style Selector="ListBoxItem:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource HoverBg}"/>
+        </Style>
+        <Style Selector="ListBoxItem:selected /template/ ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource SelectedBg}"/>
+        </Style>
+    </Window.Styles>
+
+    <Grid RowDefinitions="Auto, *">
+
+        <Border Grid.Row="0" Background="{DynamicResource CardBackground}" Padding="15" BoxShadow="0 2 4 0 #10000000" ZIndex="1">
+            <Grid ColumnDefinitions="Auto, Auto, *, Auto, Auto">
+
+                <Button Name="BtnBack" Click="BtnBack_Click" Background="Transparent" Foreground="{DynamicResource TextSecondary}" BorderThickness="0">
+                    <StackPanel Orientation="Horizontal" Spacing="5">
+                        <TextBlock Text="⬅" FontWeight="Bold"/>
+                        <TextBlock Text="Back"/>
+                    </StackPanel>
+                </Button>
+
+                <Button Name="BtnPlayAll" Click="BtnPlayAll_Click" Grid.Column="1" Margin="15,0,0,0"
+                        Background="#3182CE" Foreground="White" CornerRadius="20" Padding="15,5">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock Text="▶"/>
+                        <TextBlock Text="Play All (VLC)"/>
+                    </StackPanel>
+                </Button>
+
+                <StackPanel Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Center">
+                    <TextBlock Name="TxtServerName" Text="Server Name" FontWeight="Bold" Foreground="{DynamicResource TextPrimary}" HorizontalAlignment="Center"/>
+                    <TextBlock Text="Remote File Browser" FontSize="10" Foreground="{DynamicResource TextSecondary}" HorizontalAlignment="Center"/>
+                </StackPanel>
+
+                <ProgressBar Name="LoadingBar" Grid.Column="3" IsIndeterminate="True" Width="100" IsVisible="False" Margin="15,0" Height="4"/>
+
+                <Button Name="BtnToggleView" Click="BtnToggleView_Click" Grid.Column="4" Content="👁 View Mode" 
+                        Background="{DynamicResource PageBackground}" Foreground="{DynamicResource TextPrimary}"/>
+            </Grid>
+        </Border>
+
+        <Panel Grid.Row="1" Margin="15">
+
+            <ListBox Name="ListRemoteFiles_List" DoubleTapped="ListRemoteFiles_DoubleTapped"
+                     Background="{DynamicResource CardBackground}" CornerRadius="8" Padding="10" SelectionMode="Multiple">
+
+                <ListBox.ContextMenu>
+                    <ContextMenu>
+                        <MenuItem Header="▶ Play Selected in VLC" Click="CtxPlaySelected_Click"/>
+                    </ContextMenu>
+                </ListBox.ContextMenu>
+
+                <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="local:RemoteItem">
+                        <Grid ColumnDefinitions="50, *, Auto">
+                            <Border Grid.Column="0" Width="40" Height="40" CornerRadius="6" Background="{DynamicResource IconBg}" ClipToBounds="True">
+                                <Panel>
+                                    <TextBlock Text="{Binding TypeIcon}" FontSize="20" HorizontalAlignment="Center" VerticalAlignment="Center" IsVisible="{Binding IsIconVisible}"/>
+                                    <Image Source="{Binding ThumbnailBitmap}" Stretch="UniformToFill" IsVisible="{Binding IsImageVisible}"/>
+                                </Panel>
+                            </Border>
+
+                            <StackPanel Grid.Column="1" Margin="15,0,0,0" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="14" Foreground="{DynamicResource TextPrimary}"/>
+                                <TextBlock Text="{Binding Details}" Foreground="{DynamicResource TextSecondary}" FontSize="12"/>
+                            </StackPanel>
+
+                            <TextBlock Grid.Column="2" Text="›" Foreground="{DynamicResource TextSecondary}" FontSize="20" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+
+            <ListBox Name="ListRemoteFiles_Grid" DoubleTapped="ListRemoteFiles_DoubleTapped"
+                     Background="Transparent" IsVisible="False" SelectionMode="Multiple">
+
+                <ListBox.ContextMenu>
+                    <ContextMenu>
+                        <MenuItem Header="▶ Play Selected in VLC" Click="CtxPlaySelected_Click"/>
+                    </ContextMenu>
+                </ListBox.ContextMenu>
+
+                <ListBox.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <WrapPanel HorizontalAlignment="Center"/>
+                    </ItemsPanelTemplate>
+                </ListBox.ItemsPanel>
+
+                <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="local:RemoteItem">
+                        <Border Width="140" Height="170" Background="{DynamicResource CardBackground}" Margin="8" CornerRadius="8" BoxShadow="0 2 4 0 #10000000">
+                            <Grid RowDefinitions="*, Auto">
+                                <Border Grid.Row="0" CornerRadius="8,8,0,0" Background="{DynamicResource IconBg}" ClipToBounds="True">
+                                    <Panel>
+                                        <TextBlock Text="{Binding TypeIcon}" FontSize="40" HorizontalAlignment="Center" VerticalAlignment="Center" IsVisible="{Binding IsIconVisible}"/>
+                                        <Image Source="{Binding ThumbnailBitmap}" Stretch="UniformToFill" IsVisible="{Binding IsImageVisible}"/>
+                                    </Panel>
+                                </Border>
+                                <TextBlock Grid.Row="1" Text="{Binding Title}" Margin="10" TextWrapping="NoWrap"
+                                           TextTrimming="CharacterEllipsis" FontSize="12" HorizontalAlignment="Center" Foreground="{DynamicResource TextPrimary}"/>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+
+        </Panel>
+    </Grid>
+</Window>

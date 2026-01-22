@@ -1,0 +1,291 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="using:LocalStreamPC"
+        mc:Ignorable="d" d:DesignWidth="950" d:DesignHeight="650"
+        x:Class="LocalStreamPC.MainWindow"
+        Title="LocalStream Server"
+        Icon="/Assets/app-icon.ico"
+        Width="950" Height="650"
+        WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource PageBackground}"
+        RequestedThemeVariant="Dark"
+        FontFamily="Segoe UI, Inter, Sans-Serif">
+
+	<Window.Resources>
+		<ResourceDictionary>
+			<ResourceDictionary.ThemeDictionaries>
+				<ResourceDictionary x:Key="Light">
+					<SolidColorBrush x:Key="PageBackground">#F3F4F6</SolidColorBrush>
+					<SolidColorBrush x:Key="CardBackground">White</SolidColorBrush>
+					<SolidColorBrush x:Key="TextPrimary">#1F2937</SolidColorBrush>
+					<SolidColorBrush x:Key="TextSecondary">#6B7280</SolidColorBrush>
+					<SolidColorBrush x:Key="BorderBrush">#E5E7EB</SolidColorBrush>
+					<SolidColorBrush x:Key="IconBg">#EEF2FF</SolidColorBrush>
+				</ResourceDictionary>
+
+				<ResourceDictionary x:Key="Dark">
+					<SolidColorBrush x:Key="PageBackground">#030712</SolidColorBrush>
+					<SolidColorBrush x:Key="CardBackground">#1F2937</SolidColorBrush>
+					<SolidColorBrush x:Key="TextPrimary">#F9FAFB</SolidColorBrush>
+					<SolidColorBrush x:Key="TextSecondary">#9CA3AF</SolidColorBrush>
+					<SolidColorBrush x:Key="BorderBrush">#374151</SolidColorBrush>
+					<SolidColorBrush x:Key="IconBg">#374151</SolidColorBrush>
+				</ResourceDictionary>
+			</ResourceDictionary.ThemeDictionaries>
+		</ResourceDictionary>
+	</Window.Resources>
+
+	<Window.Styles>
+		<Style Selector="Button">
+			<Setter Property="CornerRadius" Value="6"/>
+			<Setter Property="Padding" Value="16,10"/>
+			<Setter Property="FontWeight" Value="SemiBold"/>
+			<Setter Property="Cursor" Value="Hand"/>
+			<Setter Property="Transitions">
+				<Transitions>
+					<TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.1"/>
+				</Transitions>
+			</Setter>
+		</Style>
+		<Style Selector="Button:pointerover">
+			<Setter Property="RenderTransform" Value="scale(1.02)"/>
+		</Style>
+		<Style Selector="Button:pressed">
+			<Setter Property="RenderTransform" Value="scale(0.98)"/>
+		</Style>
+
+		<Style Selector="RadioButton.nav">
+			<Setter Property="Background" Value="Transparent"/>
+			<Setter Property="Foreground" Value="#9CA3AF"/>
+			<Setter Property="Padding" Value="25,18"/>
+			<Setter Property="Margin" Value="15,8"/>
+			<Setter Property="CornerRadius" Value="12"/>
+			<Setter Property="FontSize" Value="16"/>
+			<Setter Property="Cursor" Value="Hand"/>
+			<Setter Property="Template">
+				<ControlTemplate>
+					<Border Background="{TemplateBinding Background}" CornerRadius="12" Padding="{TemplateBinding Padding}">
+						<ContentPresenter Content="{TemplateBinding Content}" HorizontalAlignment="Left"/>
+					</Border>
+				</ControlTemplate>
+			</Setter>
+		</Style>
+
+		<Style Selector="RadioButton.nav:pointerover">
+			<Setter Property="Background" Value="#1F2937"/>
+			<Setter Property="Foreground" Value="White"/>
+		</Style>
+
+		<Style Selector="RadioButton.nav:checked">
+			<Setter Property="Foreground" Value="White"/>
+			<Setter Property="FontWeight" Value="Bold"/>
+		</Style>
+		<Style Selector="RadioButton.nav:checked /template/ Border">
+			<Setter Property="Background" Value="#3B82F6"/>
+			<Setter Property="BoxShadow" Value="0 4 15 0 #403B82F6"/>
+		</Style>
+
+		<Style Selector="Border.card">
+			<Setter Property="Background" Value="{DynamicResource CardBackground}"/>
+			<Setter Property="CornerRadius" Value="16"/>
+			<Setter Property="BoxShadow" Value="0 4 20 0 #15000000"/>
+			<Setter Property="Margin" Value="0,0,0,20"/>
+			<Setter Property="Transitions">
+				<Transitions>
+					<BrushTransition Property="Background" Duration="0:0:0.2"/>
+				</Transitions>
+			</Setter>
+		</Style>
+
+		<Style Selector="TextBox">
+			<Setter Property="CornerRadius" Value="8"/>
+			<Setter Property="Height" Value="42"/>
+			<Setter Property="VerticalContentAlignment" Value="Center"/>
+			<Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+		</Style>
+
+		<Style Selector="ListBoxItem">
+			<Setter Property="Padding" Value="8,4"/>
+			<Setter Property="MinHeight" Value="0"/>
+			<Setter Property="CornerRadius" Value="8"/>
+			<Setter Property="Margin" Value="0,4"/>
+		</Style>
+	</Window.Styles>
+
+	<Grid ColumnDefinitions="260, *">
+
+		<Border Grid.Column="0" Background="#111827">
+			<Grid RowDefinitions="Auto, *, Auto">
+
+				<StackPanel Margin="30,50,30,0">
+					<StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center">
+						<TextBlock Text="📡" FontSize="28"/>
+						<TextBlock Text="LocalStream" Foreground="White" FontSize="24" FontWeight="Bold" VerticalAlignment="Center"/>
+					</StackPanel>
+					<TextBlock Text="MEDIA SERVER" Foreground="#6B7280" FontSize="11" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,10,0,0" LetterSpacing="2"/>
+				</StackPanel>
+
+				<StackPanel Grid.Row="1" Spacing="5" VerticalAlignment="Center">
+					<RadioButton Classes="nav" Content="📊  Dashboard" Tag="TabServer" Click="Nav_Click" IsChecked="True"/>
+					<RadioButton Classes="nav" Content="🔎  Scanner" Tag="TabScanner" Click="Nav_Click"/>
+					<RadioButton Classes="nav" Content="⚙️  Settings" Tag="TabSettings" Click="Nav_Click"/>
+				</StackPanel>
+
+				<StackPanel Grid.Row="2" Margin="30" Spacing="15">
+					<Button Name="BtnToggleTheme" Click="BtnToggleTheme_Click"
+                            Content="🌙 Dark Mode"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                            Background="#374151" Foreground="White" BorderThickness="0"/>
+					<TextBlock Text="v1.0.0" Foreground="#4B5563" HorizontalAlignment="Center" FontSize="12"/>
+				</StackPanel>
+			</Grid>
+		</Border>
+
+		<Panel Grid.Column="1" Margin="40">
+
+			<Grid Name="TabServer" RowDefinitions="Auto, *" IsVisible="True">
+				<ScrollViewer Grid.Row="1" AllowAutoHide="False">
+					<StackPanel Spacing="25" Margin="0,0,15,0">
+						<Border Classes="card" Padding="0">
+							<Grid RowDefinitions="Auto, *, Auto, Auto">
+
+								<Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1" Padding="25">
+									<StackPanel Orientation="Horizontal" Spacing="15">
+										<Border Background="{DynamicResource IconBg}" CornerRadius="10" Padding="10">
+											<TextBlock Text="📁" FontSize="24"/>
+										</Border>
+										<StackPanel VerticalAlignment="Center">
+											<TextBlock Text="Shared Libraries" FontSize="18" FontWeight="Bold" Foreground="{DynamicResource TextPrimary}"/>
+											<TextBlock Text="Manage folders and server status" FontSize="13" Foreground="{DynamicResource TextSecondary}"/>
+										</StackPanel>
+									</StackPanel>
+								</Border>
+
+								<ListBox Name="ListSharedFolders" Grid.Row="1" Height="160" Background="Transparent" BorderThickness="0" Margin="15">
+									<ListBox.ItemTemplate>
+										<DataTemplate>
+											<Grid ColumnDefinitions="Auto, *">
+												<Border Grid.Column="0" Background="{DynamicResource PageBackground}" CornerRadius="4" Padding="6" Margin="0,0,10,0">
+													<TextBlock Text="📂" FontSize="12" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+												</Border>
+												<TextBlock Grid.Column="1" Text="{Binding}" VerticalAlignment="Center" FontWeight="Normal"
+                                                           Foreground="{DynamicResource TextPrimary}" FontSize="12" TextTrimming="CharacterEllipsis"/>
+											</Grid>
+										</DataTemplate>
+									</ListBox.ItemTemplate>
+								</ListBox>
+
+								<Border Grid.Row="2" Background="{DynamicResource PageBackground}" Padding="15,10" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,1,0,0">
+									<Grid ColumnDefinitions="*, Auto">
+										<TextBlock Text="Select folders to stream over UPnP" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" FontSize="12" Margin="10,0"/>
+										<StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10">
+											<Button Name="BtnRemoveFolder" Click="BtnRemoveFolder_Click" Content="Remove"
+                                                    Background="Transparent" Foreground="#EF4444" BorderBrush="#EF4444" BorderThickness="1"/>
+											<Button Name="BtnAddFolder" Click="BtnAddFolder_Click" Content="+ Add Folder"
+                                                    Background="Transparent" Foreground="#3B82F6" BorderBrush="#3B82F6" BorderThickness="1"/>
+										</StackPanel>
+									</Grid>
+								</Border>
+
+								<Button Name="BtnToggleServer" Grid.Row="3" Click="BtnToggleServer_Click" Content="START SERVER"
+                                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                        Background="#10B981" Foreground="White" FontSize="16" FontWeight="Bold"
+                                        CornerRadius="0,0,16,16" Height="60"/>
+							</Grid>
+						</Border>
+
+						<Border Classes="card" Padding="0">
+							<Grid RowDefinitions="Auto, *">
+								<Border Background="#1F2937" CornerRadius="16,16,0,0" Padding="20,12">
+									<Grid ColumnDefinitions="*, Auto">
+										<StackPanel Orientation="Horizontal" Spacing="10">
+											<TextBlock Text=">_" Foreground="#10B981" FontWeight="Bold" FontFamily="Consolas" FontSize="16"/>
+											<TextBlock Text="Console Output" Foreground="White" FontWeight="SemiBold" VerticalAlignment="Center"/>
+										</StackPanel>
+										<Button Grid.Column="1" Name="BtnCopyLogs" Click="BtnCopyLogs_Click" Content="Copy"
+                                                FontSize="12" Padding="10,4" Background="#374151" Foreground="White" CornerRadius="6" BorderThickness="0"/>
+									</Grid>
+								</Border>
+								<TextBox Grid.Row="1" Name="TxtServerLogs" IsReadOnly="True" Height="180" TextWrapping="Wrap" AcceptsReturn="True"
+                                         FontFamily="Consolas, Monospace" FontSize="13" Background="#111827" Foreground="#D1D5DB"
+                                         BorderThickness="0" CornerRadius="0,0,16,16" Padding="20" SelectionBrush="#3B82F6"/>
+							</Grid>
+						</Border>
+					</StackPanel>
+				</ScrollViewer>
+			</Grid>
+
+			<Grid Name="TabScanner" RowDefinitions="Auto, *" IsVisible="False">
+				<StackPanel>
+					<Border Classes="card" Padding="25">
+						<Grid ColumnDefinitions="*, Auto">
+							<StackPanel>
+								<TextBlock Text="Device Scanner" FontSize="22" FontWeight="Bold" Foreground="{DynamicResource TextPrimary}"/>
+								<TextBlock Text="Discover other LocalStream servers on your LAN" Foreground="{DynamicResource TextSecondary}" Margin="0,5,0,0"/>
+							</StackPanel>
+							<Button Grid.Column="1" Name="BtnScan" Click="BtnScan_Click" Content="🔄 Scan Network"
+                                    Background="#3B82F6" Foreground="White" Padding="20,10"/>
+						</Grid>
+					</Border>
+
+					<Border Classes="card" Padding="0" Background="Transparent" BoxShadow="">
+						<ListBox Name="ListDevices" Background="Transparent" Margin="0">
+							<ListBox.ItemsPanel>
+								<ItemsPanelTemplate>
+									<WrapPanel />
+								</ItemsPanelTemplate>
+							</ListBox.ItemsPanel>
+							<ListBox.ItemTemplate>
+								<DataTemplate x:DataType="local:UpnpDevice">
+									<Border Width="280" Background="{DynamicResource CardBackground}" CornerRadius="16" Padding="20" Margin="0,0,20,20" BoxShadow="0 4 10 0 #15000000">
+										<Grid RowDefinitions="Auto, Auto, Auto">
+											<Border Width="50" Height="50" CornerRadius="25" Background="{DynamicResource IconBg}" HorizontalAlignment="Left" Margin="0,0,0,15">
+												<TextBlock Text="🖥️" FontSize="24" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+											</Border>
+
+											<TextBlock Grid.Row="1" Text="{Binding FriendlyName}" FontWeight="Bold" FontSize="16" Foreground="{DynamicResource TextPrimary}" TextTrimming="CharacterEllipsis"/>
+											<TextBlock Grid.Row="2" Text="{Binding BaseUrl}" Foreground="{DynamicResource TextSecondary}" FontSize="12" Margin="0,5,0,0" TextTrimming="CharacterEllipsis"/>
+										</Grid>
+									</Border>
+								</DataTemplate>
+							</ListBox.ItemTemplate>
+						</ListBox>
+					</Border>
+				</StackPanel>
+			</Grid>
+
+			<StackPanel Name="TabSettings" IsVisible="False" HorizontalAlignment="Left" Width="600">
+				<Border Classes="card" Padding="40">
+					<StackPanel Spacing="30">
+						<StackPanel>
+							<TextBlock Text="Configuration" FontSize="24" FontWeight="Bold" Foreground="{DynamicResource TextPrimary}"/>
+							<TextBlock Text="Manage general application settings" Foreground="{DynamicResource TextSecondary}" Margin="0,5,0,0"/>
+						</StackPanel>
+
+						<StackPanel Spacing="10">
+							<TextBlock Text="Server Port" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}"/>
+							<TextBox Name="TxtPort" Text="8080" Width="150" HorizontalAlignment="Left"/>
+							<TextBlock Text="Default UPnP port is 8080. Changing this requires a restart." FontSize="13" Foreground="{DynamicResource TextSecondary}"/>
+						</StackPanel>
+
+						<Border Background="{DynamicResource BorderBrush}" Height="1"/>
+
+						<StackPanel Spacing="15">
+							<CheckBox Name="ChkRunAtStartup" Content="Run app at Windows Startup"/>
+							<CheckBox Name="ChkMinimizeToTray" Content="Minimize to System Tray on Close"/>
+							<CheckBox Name="ChkAutoStartServer" Content="Auto-start Server when App opens"/>
+						</StackPanel>
+
+						<Border Background="{DynamicResource BorderBrush}" Height="1"/>
+
+						<Button Name="BtnSaveSettings" Click="BtnSaveSettings_Click" Content="💾 Save Settings"
+                                Background="#3B82F6" Foreground="White" HorizontalAlignment="Left" Padding="30,12"/>
+					</StackPanel>
+				</Border>
+			</StackPanel>
+
+		</Panel>
+	</Grid>
+</Window>

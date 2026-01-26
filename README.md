@@ -59,7 +59,7 @@
 | **Windows** | [**`LocalStream-Win.zip`**](#) | Windows 10 & 11 (x64) |
 | **Linux** | [**`LocalStream-Linux.zip`**](#) | Ubuntu, Debian, Fedora |
 | **macOS** | [**`LocalStream-Mac.zip`**](#) | Apple Silicon (M1/M2) |
-| **Android** | [**`Download from play store`**](#) | Android 10+ (Client App) |
+| **Android** | [**`Download from play store`**](https://play.google.com/store/apps/details?id=com.jeet_studio.localstream4k) | Android 10+ (Client App) |
 
 <br>
 

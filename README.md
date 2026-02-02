@@ -27,7 +27,7 @@
 
   <br>
 
-  <a href="#-downloads">
+  <a href="https://github.com/manjeetdeswal/Local-Stream-Upnp---Http-Server-/releases/tag/1.0">
     <img src="https://img.shields.io/badge/⬇_Download_App-3B82F6?style=for-the-badge&logo=windows" height="40">
   </a>
   <a href="#-how-to-use">

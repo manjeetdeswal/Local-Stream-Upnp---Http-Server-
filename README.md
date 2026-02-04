@@ -117,57 +117,66 @@ Download LocalStream-Android.apk from play store.
 Use the app to connect to your PC server or Vice Versa.
 
 </details>
+## 📖 How to Use
 
-📖 How to Use
-Add Folders: Open the app on your PC and click "Add Folder". Select your Movie/Music folders.
+**Add Folders:**  
+Open the app on your PC and click **"Add Folder"** to select your movie or music folders.
 
-Start Server: Click the big "Start Server" button.
+**Start Server:**  
+Click the big **"Start Server"** button to begin streaming.
 
-Connect:
+**Connect:**  
+- **On Phone:** Open the Android app or any web browser and type the IP address shown in the PC app.  
+- **On TV:** Open VLC or the built-in Media Player and look for **"LocalStream"** under the **Local Network** section.
 
-On Phone: Open the Android App or browser and type the IP shown.
+---
 
-On TV: Open VLC or Media Player and look for "LocalStream" in the Local Network list.
+## 🧠 Under the Hood
 
-🧠 Under the Hood
-HTTP Server (Port 8080): Hosts the web interface and handles raw file streaming. Supports Range-Requests for instant seeking/skipping.
+**HTTP Server (Port 8080):**  
+Hosts the web interface and streams media with range-request support for instant seeking and skipping.
 
-UPnP (SSDP): Broadcasts presence to the network so devices like Samsung TVs and Roku can auto-discover the server.
+**UPnP (SSDP):**  
+Broadcasts the server on your local network so devices like Samsung TVs, Roku, and VLC can automatically discover it.
 
-FFmpeg Integration: Uses Xabe.FFmpeg to generate video thumbnails on the fly.
+**FFmpeg Integration:**  
+Uses **Xabe.FFmpeg** to generate video thumbnails and previews on the fly.
 
-🛠️ Developers: Build from Source
-To build this project yourself, you need the .NET 8 SDK.
+---
 
-1. Clone & Setup
-Bash
+## 🛠️ Developers: Build from Source
 
-git clone https://github.com/manjeetdeswal/Local-Stream-Upnp---Http-Server-
+To build this project yourself, you need the **.NET 8 SDK**.
+
+### 1. Clone & Setup
+
+git clone https://github.com/manjeetdeswal/Local-Stream-Upnp---Http-Server-  
 cd LocalStream
-2. Add Binaries
-Create a Binaries folder in the project root and add ffmpeg / ffprobe executables for each OS:
 
-Plaintext
+### 2. Add Binaries
 
-/LocalStreamPC
-  /Binaries
-    /win   (ffmpeg.exe, ffprobe.exe)
-    /linux (ffmpeg, ffprobe)  <-- No extension
-    /mac   (ffmpeg, ffprobe)  <-- No extension
-3. Build Commands
-Windows
+Create a **Binaries** folder in the project root and add **ffmpeg / ffprobe** executables for each OS in the following structure:
 
-PowerShell
+/LocalStreamPC  
+  /Binaries  
+    /win    (ffmpeg.exe, ffprobe.exe)  
+    /linux  (ffmpeg, ffprobe)  
+    /mac    (ffmpeg, ffprobe)
 
+### 3. Build Commands
+
+**Windows (PowerShell):**  
 dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
-Linux
 
-Bash
-
+**Linux (Bash):**  
 dotnet publish -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true
-macOS (Apple Silicon)
 
-Bash
-
+**macOS (Apple Silicon):**  
 dotnet publish -c Release -r osx-arm64 --self-contained true -p:PublishSingleFile=true
-<div align="center"> <p>Distributed under the <strong>MIT License</strong>.</p> <img src="https://img.shields.io/badge/Made%20with-%E2%9D%A4-red" alt="Made with Love"> </div>
+
+---
+
+<div align="center">
+  <p>Distributed under the <strong>MIT License</strong>.</p>
+  <img src="https://img.shields.io/badge/Made%20with-%E2%9D%A4-red" alt="Made with Love">
+</div>

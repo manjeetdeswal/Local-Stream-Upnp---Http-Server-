@@ -179,4 +179,5 @@ dotnet publish -c Release -r osx-arm64 --self-contained true -p:PublishSingleFil
 <div align="center">
   <p>Distributed under the <strong>MIT License</strong>.</p>
   <img src="https://img.shields.io/badge/Made%20with-%E2%9D%A4-red" alt="Made with Love">
+  <b>Manjeet Deswal</b>
 </div>

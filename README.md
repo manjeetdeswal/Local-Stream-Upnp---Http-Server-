@@ -142,7 +142,7 @@ To build this project yourself, you need the .NET 8 SDK.
 1. Clone & Setup
 Bash
 
-git clone https://github.com/yourusername/LocalStream.git
+git clone https://github.com/manjeetdeswal/Local-Stream-Upnp---Http-Server-
 cd LocalStream
 2. Add Binaries
 Create a Binaries folder in the project root and add ffmpeg / ffprobe executables for each OS:

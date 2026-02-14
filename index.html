@@ -246,11 +246,35 @@
             </div>
 
             <div id="content-mac" class="hidden bg-card p-8 rounded-xl border border-gray-700">
-                <p class="mb-4 text-gray-400">Run this command to fix the "App is damaged" error:</p>
-                <div class="bg-black p-4 rounded-lg font-mono text-sm text-green-400 mb-4">
-                    xattr -cr ~/Downloads/LocalStreamPC/
-                </div>
-            </div>
+    <p class="mb-4 text-gray-400">
+        If macOS shows <strong>"App is damaged"</strong> or the app gets <strong>killed</strong>,
+        run these commands in Terminal:
+    </p>
+
+    <div class="bg-black p-4 rounded-lg font-mono text-sm text-green-400 mb-4">
+        cd ~/Downloads/LocalStreamMac<br><br>
+        sudo xattr -rd com.apple.quarantine .<br><br>
+        sudo codesign --force --deep --sign - ./LocalStreamPC
+    </div>
+
+    <p class="mt-4 mb-2 text-gray-400">
+        Then run:
+    </p>
+
+    <div class="bg-black p-4 rounded-lg font-mono text-sm text-green-400 mb-4">
+        ./LocalStreamPC
+    </div>
+
+    <p class="mt-4 text-gray-400">
+        <strong>Apple Silicon (M1/M2/M3):</strong>
+    </p>
+
+    <div class="bg-black p-4 rounded-lg font-mono text-sm text-green-400">
+        softwareupdate --install-rosetta --agree-to-license<br>
+        arch -x86_64 ./LocalStreamPC
+    </div>
+</div>
+
 
             <div id="content-android" class="hidden bg-card p-8 rounded-xl border border-gray-700">
                 <ol class="list-decimal list-inside space-y-4 text-gray-300">
@@ -286,5 +310,6 @@
 </body>
 
 </html>
+
 
 

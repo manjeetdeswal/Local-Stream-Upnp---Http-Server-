@@ -97,13 +97,17 @@ chmod +x ffmpeg
 
 
 # Move the app to a permanent location
-   sudo mv . /opt/LocalStream/
+   unzip LocalStream-Linux.zip -d LocalStream
    
-   # Make the files executable
+   # Move that folder to /opt/ (the standard location for manual installs)
+   sudo mv LocalStream /opt/
+   
+   # Make the core app and FFmpeg binaries executable
    sudo chmod +x /opt/LocalStream/LocalStreamPC
    sudo chmod +x /opt/LocalStream/ffmpeg
+   sudo chmod +x /opt/LocalStream/ffprobe
    
-   # Install the icon to your Application Menu
+   # Copy the .desktop file to register the app and its icon in your launcher
    sudo cp /opt/LocalStream/LocalStream.desktop /usr/share/applications/
 ```
 

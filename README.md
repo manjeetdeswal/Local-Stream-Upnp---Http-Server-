@@ -91,6 +91,20 @@ cd LocalStreamLinux
 chmod +x LocalStreamPC
 chmod +x ffmpeg
 ./LocalStreamPC
+
+
+   or
+
+
+# Move the app to a permanent location
+   sudo mv . /opt/LocalStream/
+   
+   # Make the files executable
+   sudo chmod +x /opt/LocalStream/LocalStreamPC
+   sudo chmod +x /opt/LocalStream/ffmpeg
+   
+   # Install the icon to your Application Menu
+   sudo cp /opt/LocalStream/LocalStream.desktop /usr/share/applications/
 ```
 
 </details>

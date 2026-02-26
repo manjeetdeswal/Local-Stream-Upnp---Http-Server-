@@ -253,8 +253,8 @@
 
     <div class="bg-black p-4 rounded-lg font-mono text-sm text-green-400 mb-4">
         cd ~/Downloads/LocalStreamMac<br><br>
-        sudo xattr -rd com.apple.quarantine .<br><br>
-        sudo codesign --force --deep --sign - ./LocalStreamPC
+        sudo xattr -rd com.apple.quarantine LocalStream.app <br><br>
+        sudo codesign --force --deep --sign - LocalStream.app
     </div>
 
     <p class="mt-4 mb-2 text-gray-400">
@@ -262,7 +262,7 @@
     </p>
 
     <div class="bg-black p-4 rounded-lg font-mono text-sm text-green-400 mb-4">
-        ./LocalStreamPC
+        open LocalStream.app
     </div>
 
     <p class="mt-4 text-gray-400">
@@ -310,6 +310,7 @@
 </body>
 
 </html>
+
 
 
 

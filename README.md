@@ -141,19 +141,19 @@ cd ~/Downloads/LocalStreamMac
 4. Remove macOS quarantine:
 
 ```bash
-sudo xattr -rd com.apple.quarantine .
+sudo codesign --force --deep --sign - LocalStream.app.
 ```
 
 5. Self-sign (required on newer macOS):
 
 ```bash
-sudo codesign --force --deep --sign - ./LocalStreamPC
+sudo codesign --force --deep --sign - LocalStream.app
 ```
 
 6. Run:
 
 ```bash
-./LocalStreamPC
+open LocalStream.app
 ```
 
 ### ⚠️ If you see `zsh: killed`

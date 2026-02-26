@@ -72,9 +72,9 @@
 
 | Platform | Download Link | Notes |
 | :--- | :--- | :--- |
-| **Windows** | `LocalStream-Win.zip` | Windows 10 & 11 (x64) |
-| **Linux** | `LocalStream-Linux.zip` | Ubuntu, Debian, Fedora |
-| **macOS** | `LocalStream-Mac.zip` | Apple Silicon (M1/M2) |
+| **Windows** | `LocalStreamWin.zip` | Windows 10 & 11 (x64) |
+| **Linux** | `LocalStreamLinux.zip` | Ubuntu, Debian, Fedora |
+| **macOS** | `LocalStreamMac.zip` | Apple Silicon (M1/M2) |
 | **Android** | https://play.google.com/store/apps/details?id=com.jeet_studio.localstream4k | Android 10+ (Client App) |
 
 ---
@@ -86,7 +86,7 @@ Click the arrow next to your platform to see instructions.
 <details>
 <summary><strong>🪟 Windows (Click to Expand)</strong></summary>
 
-1. Download **LocalStream-Win.zip**
+1. Download **LocalStreamWin.zip**
 2. Extract the ZIP file
 3. Run `LocalStreamPC.exe`
 4. If Windows SmartScreen appears → Click **More Info → Run Anyway**
@@ -96,11 +96,11 @@ Click the arrow next to your platform to see instructions.
 <details>
 <summary><strong>🐧 Linux (Click to Expand)</strong></summary>
 
-1. Download **LocalStream-Linux.zip**
+1. Download **LocalStreamLinux.zip**
 2. Open Terminal:
 
 ```bash
-unzip LocalStream-Linux.zip
+unzip LocalStreamLinux.zip
 cd LocalStreamLinux
 chmod +x LocalStreamPC
 chmod +x ffmpeg
@@ -111,7 +111,7 @@ chmod +x ffmpeg
 
 
 # Move the app to a permanent location
-   unzip LocalStream-Linux.zip -d LocalStream
+   unzip LocalStreamLinux.zip -d LocalStream
    
    # Move that folder to /opt/ (the standard location for manual installs)
    sudo mv LocalStream /opt/
@@ -130,7 +130,7 @@ chmod +x ffmpeg
 <details>
 <summary><strong>🍎 macOS (Click to Expand)</strong></summary>
 
-1. Download **LocalStream-Mac.zip**
+1. Download **LocalStreamMac.zip**
 2. Extract the files
 3. Open Terminal and navigate:
 
@@ -248,5 +248,6 @@ dotnet publish -c Release -r osx-arm64 --self-contained true -p:PublishSingleFil
 
 <div align="center">
   <p>Distributed under the <strong>MIT License</strong>.</p>
+  <img src="https://img.shields.io/badge/Made%20with-%E2%9D%A4-red" alt="Made with Love">
   <p><b>Manjeet Deswal</b></p>
 </div>

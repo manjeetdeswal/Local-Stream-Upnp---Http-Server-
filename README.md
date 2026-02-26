@@ -135,7 +135,8 @@ chmod +x ffmpeg
 3. Open Terminal and navigate:
 
 ```bash
-cd ~/Downloads/LocalStreamMac
+cd ~/Downloads
+chmod +x LocalStream.app/Contents/MacOS/*
 ```
 
 4. Remove macOS quarantine:

@@ -115,6 +115,8 @@ chmod +x ffmpeg
    
    # Move that folder to /opt/ (the standard location for manual installs)
    sudo mv LocalStream /opt/
+
+   sudo mv /opt/LocalStream/LocalStreamLinux/* /opt/LocalStream/
    
    # Make the core app and FFmpeg binaries executable
    sudo chmod +x /opt/LocalStream/LocalStreamPC

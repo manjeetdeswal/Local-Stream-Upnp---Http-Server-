@@ -4,7 +4,7 @@
 
 <h2>
   <a href="https://manjeetdeswal.github.io/Local-Stream-Upnp---Http-Server-/" target="_blank">🌐 Website</a>
-    <a href="https://play.google.com/store/apps/details?id=com.jeet_studio.use_as" target="_blank">🌐 Android App</a>
+    <a href="https://play.google.com/store/apps/details?id=com.jeet_studio.localstream4k" target="_blank">🌐 Android App</a>
 </h2>
 
 <p>

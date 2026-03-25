@@ -92,6 +92,27 @@ Click the arrow next to your platform to see instructions.
 3. Run `LocalStreamPC.exe`
 4. If Windows SmartScreen appears → Click **More Info → Run Anyway**
 
+<h2>(If your server(http upnp) is not discooverable outside your pc then do this)</h2> <br><br>
+The  Fix (Open the Port) <br><br>
+Let's tell Windows to permanently unblock Port 8080 so your server is always visible.<br><br>
+
+Click the Windows Start Menu, type Windows Defender Firewall with Advanced Security, and press Enter.
+
+On the left panel, click on Inbound Rules.
+
+On the far right panel, click New Rule...
+
+Select Port and click Next.
+
+Select TCP, and in the Specific local ports box, type 8080, then click Next.
+
+Select Allow the connection, click Next.
+
+Leave all three boxes checked (Domain, Private, Public) and click Next.
+
+Name it LocalStream Server Port 8080 and click Finish.
+
+Now, fully restart your LocalStream app (making sure it's running as Administrator, just in case).
 </details>
 
 <details>

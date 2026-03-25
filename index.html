@@ -227,15 +227,38 @@
                 <button onclick="showTab('android')" id="tab-android" class="px-6 py-4 font-medium tab-inactive transition text-green-400">Android</button>
             </div>
 
-            <div id="content-win" class="bg-card p-8 rounded-xl border border-gray-700">
-                <ol class="list-decimal list-inside space-y-4 text-gray-300">
-                    <li>Extract the downloaded <strong>.zip</strong> file.</li>
-                    <li>Open the extracted folder.</li>
-                    <li>Double-click <code class="bg-black px-2 py-1 rounded text-blue-400">LocalStreamPC.exe</code>.</li>
-                    <li>Click <strong>"Run Anyway"</strong> if prompted by Windows SmartScreen.</li>
-                </ol>
-            </div>
+        <div id="content-win" class="bg-card p-8 rounded-xl border border-gray-700">
+    <ol class="list-decimal list-inside space-y-4 text-gray-300">
+        <li>Extract the downloaded <strong>.zip</strong> file.</li>
+        <li>Open the extracted folder.</li>
+        <li>Double-click <code class="bg-black px-2 py-1 rounded text-blue-400">LocalStreamPC.exe</code>.</li>
+        <li>Click <strong>"Run Anyway"</strong> if prompted by Windows SmartScreen.</li>
 
+        <li class="mt-6">
+            <strong class="text-yellow-400">(If your server (HTTP/UPnP) is not discoverable outside your PC)</strong>
+            <div class="mt-3 p-4 bg-black rounded-lg border border-gray-600">
+                <p class="mb-3 text-gray-400 font-semibold">🔧 The Ultimate Fix (Open Port 8080)</p>
+                <p class="mb-3">Let's tell Windows to permanently unblock Port 8080 so your server is always visible:</p>
+
+                <ul class="list-disc list-inside space-y-2">
+                    <li>Open Start Menu → search <strong>Windows Defender Firewall with Advanced Security</strong>.</li>
+                    <li>Click <strong>Inbound Rules</strong> (left panel).</li>
+                    <li>Click <strong>New Rule...</strong> (right panel).</li>
+                    <li>Select <strong>Port</strong> → Next.</li>
+                    <li>Select <strong>TCP</strong> and enter <code class="bg-gray-800 px-2 py-1 rounded">8080</code>.</li>
+                    <li>Select <strong>Allow the connection</strong>.</li>
+                    <li>Keep <strong>Domain, Private, Public</strong> checked.</li>
+                    <li>Name it <code class="bg-gray-800 px-2 py-1 rounded">LocalStream Server Port 8080</code>.</li>
+                    <li>Click <strong>Finish</strong>.</li>
+                </ul>
+
+                <p class="mt-3 text-gray-400">
+                    🔁 Restart <strong>LocalStream</strong> (run as Administrator if needed).
+                </p>
+            </div>
+        </li>
+    </ol>
+</div>
             <div id="content-linux" class="hidden bg-card p-8 rounded-xl border border-gray-700">
                 <div class="bg-black p-4 rounded-lg font-mono text-sm text-green-400 mb-4">
 				

@@ -94,7 +94,7 @@ Click the arrow next to your platform to see instructions.
 
 <h2>(If your server(http upnp) is not discooverable outside your pc then do this)</h2> <br><br>
 The  Fix (Open the Port) <br><br>
-Let's tell Windows to permanently unblock Port 8080 so your server is always visible.<br><br>
+Tell Windows to permanently unblock Port 8080 so your server is always visible.<br><br>
 
 Click the Windows Start Menu, type Windows Defender Firewall with Advanced Security, and press Enter.
 

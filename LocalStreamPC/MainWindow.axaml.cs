@@ -1,4 +1,5 @@
-﻿using Avalonia.Controls;
+using Avalonia;
+using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
@@ -7,12 +8,15 @@ using Avalonia.Threading; // For UI Thread updates
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Net.Http;
 using System.Net.Sockets;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices; // To detect OS (Windows vs Linux)
 using System.Text;
 using System.Text.Json;
@@ -41,15 +45,64 @@ namespace LocalStreamPC
         private string _localIp;
         // Limit FFmpeg to 1 active process to prevent server freeze
         private static readonly SemaphoreSlim _thumbLock = new SemaphoreSlim(1, 1);
-        // --- SETTINGS ---
+        public ObservableCollection<ServerUrlItem> ActiveServerUrls { get; set; } = new ObservableCollection<ServerUrlItem>();
+        private List<(string Ip, string Name)> _localIps = new List<(string Ip, string Name)>();
+
+
         public static AppConfig Config { get; private set; }
         private string _configPath = "config.json";
 
+       
+
+        private string _serverUuid = Guid.NewGuid().ToString();
+
         public ObservableCollection<UpnpDevice> DiscoveredDevices { get; set; } = new ObservableCollection<UpnpDevice>();
+
+        public ObservableCollection<BreadcrumbItem> Breadcrumbs { get; set; } = new ObservableCollection<BreadcrumbItem>();
+
+        // remote var
+
+        private string _remoteControlUrl;
+        private string _remoteBaseUrl;
+        private Stack<string> _remoteHistory = new Stack<string>();
+        private string _currentRemoteContainer = "0";
+        private bool _isRemoteGridView = false;
+        public ObservableCollection<RemoteItem> RemoteItems { get; set; } = new ObservableCollection<RemoteItem>();
+
+        private bool _isListView = false;
+
+        private string _currentServerName = "";
+
+
+        // Collections for the Home Page
+        public ObservableCollection<RemoteItem> RootItems { get; set; } = new ObservableCollection<RemoteItem>();
+        public ObservableCollection<RemoteItem> ContinueWatchingItems { get; set; } = new ObservableCollection<RemoteItem>();
+        public ObservableCollection<RemoteItem> RandomItems { get; set; } = new ObservableCollection<RemoteItem>();
+
+        // Grid Size Properties
+        public static readonly StyledProperty<double> GridItemWidthProperty = AvaloniaProperty.Register<MainWindow, double>(nameof(GridItemWidth), 180.0);
+        public double GridItemWidth
+        {
+            get => GetValue(GridItemWidthProperty);
+            set { SetValue(GridItemWidthProperty, value); GridItemHeight = value / 1.777; } // Keep 16:9 aspect ratio
+        }
+
+        public static readonly StyledProperty<double> GridItemHeightProperty = AvaloniaProperty.Register<MainWindow, double>(nameof(GridItemHeight), 101.0);
+        public double GridItemHeight
+        {
+            get => GetValue(GridItemHeightProperty);
+            set => SetValue(GridItemHeightProperty, value);
+        }
+
+
+
+
+
 
         public MainWindow()
         {
             InitializeComponent();
+            DataContext = this;
             LoadConfig();
             Xabe.FFmpeg.FFmpeg.SetExecutablesPath(AppDomain.CurrentDomain.BaseDirectory);
 
@@ -108,11 +161,104 @@ namespace LocalStreamPC
             Closing += Window_Closing;
         }
 
-        // ===========================
-        //       UI EVENTS
-        // ===========================
 
 
+        private void RefreshActiveNetworkIps()
+        {
+            _localIps.Clear();
+            foreach (var netInterface in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (netInterface.OperationalStatus == OperationalStatus.Up &&
+                    netInterface.NetworkInterfaceType != NetworkInterfaceType.Loopback)
+                {
+                    var props = netInterface.GetIPProperties();
+                    foreach (var addr in props.UnicastAddresses)
+                    {
+                        if (addr.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+                        {
+                            // Save BOTH the IP and the Network Name
+                            _localIps.Add((addr.Address.ToString(), netInterface.Name));
+                        }
+                    }
+                }
+            }
+
+            if (_localIps.Count == 0) _localIps.Add(("127.0.0.1", "Localhost"));
+        }
+
+        private void CmbGridSize_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (CmbGridSize == null) return;
+
+            Config.GridSizeIndex = CmbGridSize.SelectedIndex;
+            SaveConfig();
+
+            // Updated pixel sizes for the new layout
+            switch (CmbGridSize.SelectedIndex)
+            {
+                case 0: GridItemWidth = 140; break;  // Small
+                case 1: GridItemWidth = 180; break;  // Medium
+                case 2: GridItemWidth = 240; break;  // Large
+                case 3: GridItemWidth = 320; break;  // XL
+                case 4: GridItemWidth = 450; break;  // XXL (Massive)
+            }
+        }
+
+
+
+        // Updated parser to target correct lists
+        private void ParseRemoteDidl(string xml, bool isRoot)
+        {
+            try
+            {
+                var doc = XDocument.Parse(xml);
+                var containers = doc.Descendants().Where(e => e.Name.LocalName == "container").ToList();
+                var items = doc.Descendants().Where(e => e.Name.LocalName == "item").ToList();
+
+                var targetList = isRoot ? RootItems : RemoteItems;
+
+                Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    // CRITICAL FIX: Clear the list immediately before populating to prevent duplicates!
+                    targetList.Clear();
+
+                    foreach (var c in containers)
+                    {
+                        string title = c.Elements().FirstOrDefault(e => e.Name.LocalName == "title")?.Value ?? "Folder";
+                        string countStr = c.Attribute("childCount")?.Value;
+                        var folder = new RemoteItem { Id = c.Attribute("id")?.Value, Title = title, IsFolder = true, TypeIcon = "📁", Details = string.IsNullOrEmpty(countStr) ? "Folder" : $"{countStr} items" };
+
+                        targetList.Add(folder);
+                        _ = FetchFolderThumbnailAsync(folder);
+                    }
+
+                    foreach (var i in items)
+                    {
+                        string title = i.Elements().FirstOrDefault(e => e.Name.LocalName == "title")?.Value ?? "File";
+                        var res = i.Elements().FirstOrDefault(e => e.Name.LocalName == "res");
+                        var upnpClass = i.Elements().FirstOrDefault(e => e.Name.LocalName == "class")?.Value ?? "";
+                        string thumbUrl = i.Elements().FirstOrDefault(e => e.Name.LocalName == "albumArtURI")?.Value;
+
+                        if (!string.IsNullOrEmpty(thumbUrl) && !thumbUrl.StartsWith("http"))
+                            thumbUrl = thumbUrl.StartsWith("/") ? _remoteBaseUrl.TrimEnd('/') + thumbUrl : _remoteBaseUrl.TrimEnd('/') + "/" + thumbUrl;
+
+                        string icon = "📄";
+                        if (upnpClass.Contains("video")) icon = "🎬";
+                        else if (upnpClass.Contains("audio") || upnpClass.Contains("music")) icon = "🎵";
+                        else if (upnpClass.Contains("image")) icon = "🖼️";
+
+                        var newItem = new RemoteItem { Id = i.Attribute("id")?.Value, Title = title, IsFolder = false, Url = res?.Value, TypeIcon = icon, Details = "Media File", ThumbnailUrl = thumbUrl };
+
+                        var historyMatch = Config.History?.FirstOrDefault(h => h.Url == newItem.Url);
+                        if (historyMatch != null) newItem.WatchProgress = historyMatch.Progress;
+
+                        if (!string.IsNullOrEmpty(thumbUrl)) _ = newItem.LoadThumbnailAsync();
+                        targetList.Add(newItem);
+                    }
+                });
+            }
+            catch { }
+        }
 
 
 
@@ -159,14 +305,19 @@ namespace LocalStreamPC
                         }
                     }
 
-                    // Log($"🧹 Cache cleaned. Current size: {totalSize / 1024 / 1024} MB");
+                    // Log($" Cache cleaned. Current size: {totalSize / 1024 / 1024} MB");
                 }
                 catch (Exception ex)
                 {
-                    Log($"⚠️ Cache Cleanup Error: {ex.Message}");
+                    Log($" Cache Cleanup Error: {ex.Message}");
                 }
             });
         }
+
+
+
+
+
 
         private void CreateTrayIcon()
         {
@@ -206,6 +357,108 @@ namespace LocalStreamPC
                 Log("Error creating tray icon: " + ex.Message);
             }
         }
+
+
+        private void BtnCopyIp_Click(object sender, RoutedEventArgs e)
+        {
+            if (_isServerRunning)
+            {
+                string serverUrl = $"http://{_localIp}:{Config.Port}/";
+                var topLevel = TopLevel.GetTopLevel(this);
+                topLevel?.Clipboard?.SetTextAsync(serverUrl);
+                Log("Server URL copied to clipboard.");
+            }
+            else
+            {
+                Log("Please start the server first.");
+            }
+        }
+
+
+        private async void BtnCheckUpdate_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button btn)
+            {
+                btn.Content = "⏳";
+                btn.IsEnabled = false;
+
+                try
+                {
+                    using (var client = new HttpClient())
+                    {
+                        client.DefaultRequestHeaders.Add("User-Agent", "LocalStream-App");
+
+                        string apiUrl = "https://api.github.com/repos/manjeetdeswal/Local-Stream-Upnp---Http-Server-/releases/latest";
+                        string releaseUrl = "https://github.com/manjeetdeswal/Local-Stream-Upnp---Http-Server-/releases/latest";
+
+                        var response = await client.GetStringAsync(apiUrl);
+
+                        using (JsonDocument doc = JsonDocument.Parse(response))
+                        {
+                            string latestVersion = doc.RootElement.GetProperty("tag_name").GetString();
+                            string currentVersion = "1.1";
+
+                            if (latestVersion != currentVersion)
+                            {
+                                Log($"Update available! Latest: {latestVersion} (Current: {currentVersion})");
+
+                                Dispatcher.UIThread.InvokeAsync(() => {
+                                    btn.Content = "⭐";
+                                    ToolTip.SetTip(btn, "Update Available!"); // FIXED: Used SetTip method
+                                    btn.Background = Avalonia.Media.Brushes.ForestGreen;
+                                });
+
+                                // Open Browser
+                                try
+                                {
+                                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                                    {
+                                        FileName = releaseUrl,
+                                        UseShellExecute = true
+                                    });
+                                }
+                                catch (Exception ex)
+                                {
+                                    Log($"Failed to open browser automatically: {ex.Message}");
+                                }
+                            }
+                            else
+                            {
+                                Log("You are running the latest version.");
+                                Dispatcher.UIThread.InvokeAsync(() => {
+                                    btn.Content = "✔️";
+                                    ToolTip.SetTip(btn, "Up to date"); // FIXED
+                                });
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log($"Update check failed: {ex.Message}");
+                    Dispatcher.UIThread.InvokeAsync(() => {
+                        btn.Content = "❌";
+                        ToolTip.SetTip(btn, "Check Failed"); // FIXED
+                    });
+                }
+                finally
+                {
+                    await Task.Delay(4000);
+                    Dispatcher.UIThread.InvokeAsync(() => {
+                        if (btn.Content?.ToString() != "⭐")
+                        {
+                            btn.Content = "🔄";
+                            ToolTip.SetTip(btn, "Check for Updates"); // FIXED
+                        }
+                        btn.IsEnabled = true;
+                    });
+                }
+            }
+        }
+
+
+
+
         private async void BtnAddFolder_Click(object sender, RoutedEventArgs e)
         {
             var topLevel = TopLevel.GetTopLevel(this);
@@ -225,7 +478,7 @@ namespace LocalStreamPC
                 if (!Config.SharedFolders.Contains(path))
                 {
                     Config.SharedFolders.Add(path);
-                    Log($"📂 Added: {path}");
+                    Log($" Added: {path}");
                 }
             }
 
@@ -244,7 +497,7 @@ namespace LocalStreamPC
                 ListSharedFolders.ItemsSource = null;
                 ListSharedFolders.ItemsSource = Config.SharedFolders;
                 SaveConfig();
-                Log($"🗑️ Removed: {path}");
+                Log($" Removed: {path}");
             }
         }
        
@@ -273,21 +526,44 @@ namespace LocalStreamPC
         private void BtnSaveSettings_Click(object sender, RoutedEventArgs e)
         {
             SaveConfig();
+            SetStartup(Config.RunAtStartup);
             Log("Settings saved!");
+
         }
 
         private void Nav_Click(object sender, RoutedEventArgs e)
         {
             if (sender is RadioButton btn && btn.Tag is string tag)
             {
-                // Avalonia uses IsVisible instead of Visibility.Collapsed/Visible
                 TabServer.IsVisible = false;
-                TabScanner.IsVisible = false;
+                var tabServers = this.FindControl<Grid>("TabServers"); // Updated Name
+                if (tabServers != null) tabServers.IsVisible = false;
                 TabSettings.IsVisible = false;
 
+                var tabRemote = this.FindControl<Grid>("TabRemoteBrowser");
+                if (tabRemote != null) tabRemote.IsVisible = false;
+
                 if (tag == "TabServer") TabServer.IsVisible = true;
-                if (tag == "TabScanner") TabScanner.IsVisible = true;
+                if (tag == "TabServers")
+                {
+                    if (tabServers != null) tabServers.IsVisible = true;
+
+                    // AUTO-SCAN LOGIC: Trigger a scan if the list is empty when clicking the tab
+                    if (DiscoveredDevices.Count == 0)
+                    {
+                        BtnScan_Click(BtnScan, new RoutedEventArgs());
+                    }
+                }
                 if (tag == "TabSettings") TabSettings.IsVisible = true;
+            }
+        }
+        private void BtnConnectServer_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button btn && btn.Tag is UpnpDevice device)
+            {
+                // Re-use your existing connection logic
+                ListDevices.SelectedItem = device;
+                ListDevices_DoubleTapped(null, null);
             }
         }
 
@@ -295,18 +571,634 @@ namespace LocalStreamPC
         {
             if (ListDevices.SelectedItem is UpnpDevice device)
             {
-                if (string.IsNullOrEmpty(device.ContentDirectoryUrl))
+                if (string.IsNullOrEmpty(device.ContentDirectoryUrl)) return;
+
+                _remoteControlUrl = device.ContentDirectoryUrl;
+                _remoteBaseUrl = device.BaseUrl;
+
+                // Initialize Breadcrumbs with Root Name
+                Breadcrumbs.Clear();
+                Breadcrumbs.Add(new BreadcrumbItem { Id = "0", Title = device.FriendlyName, IsNotFirst = false, IsLast = true });
+
+                var listList = this.FindControl<ListBox>("ListRemoteFiles_List");
+                var listGrid = this.FindControl<ListBox>("ListRemoteFiles_Grid");
+                if (listList != null) listList.ItemsSource = RemoteItems;
+                if (listGrid != null) listGrid.ItemsSource = RemoteItems;
+
+                var tabServers = this.FindControl<Grid>("TabServers");
+                if (tabServers != null) tabServers.IsVisible = false;
+
+                var tabRemote = this.FindControl<Grid>("TabRemoteBrowser");
+                if (tabRemote != null) tabRemote.IsVisible = true;
+
+                LoadRemoteFolder("0");
+            }
+        }
+
+
+
+        private async void LoadRemoteFolder(string containerId)
+        {
+            var loading = this.FindControl<ProgressBar>("RemoteLoadingBar");
+            var homeView = this.FindControl<ScrollViewer>("RemoteHomeScroller");
+            var folderView = this.FindControl<Panel>("RemoteFolderView");
+
+            if (loading != null) loading.IsVisible = true;
+
+            // Check if we are at root OR if we clicked a "See All" dummy ID
+            bool isRoot = containerId == "0";
+            if (containerId.Contains("_ALL")) isRoot = false;
+
+            if (homeView != null) homeView.IsVisible = isRoot;
+            if (folderView != null) folderView.IsVisible = !isRoot;
+
+            if (isRoot)
+            {
+                RootItems.Clear();
+                LoadContinueWatching();
+                _ = FetchRandomRecommendationsAsync();
+            }
+            else
+            {
+                RemoteItems.Clear();
+                if (containerId.Contains("_ALL")) return; // Don't run UPnP fetch for "See All" fake folders
+            }
+
+            try
+            {
+                string fullUrl = _remoteBaseUrl.TrimEnd('/') + "/" + _remoteControlUrl.TrimStart('/');
+                string soap = $@"<?xml version=""1.0""?>
+<s:Envelope xmlns:s=""http://schemas.xmlsoap.org/soap/envelope/"" s:encodingStyle=""http://schemas.xmlsoap.org/soap/encoding/"">
+  <s:Body>
+    <u:Browse xmlns:u=""urn:schemas-upnp-org:service:ContentDirectory:1"">
+      <ObjectID>{containerId}</ObjectID>
+      <BrowseFlag>BrowseDirectChildren</BrowseFlag>
+      <Filter>*</Filter>
+      <StartingIndex>0</StartingIndex>
+      <RequestedCount>0</RequestedCount>
+      <SortCriteria></SortCriteria>
+    </u:Browse>
+  </s:Body>
+</s:Envelope>";
+
+                using (var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) })
                 {
-                    Log("This device does not support file browsing.");
-                    return;
+                    var content = new StringContent(soap, Encoding.UTF8, "text/xml");
+                    content.Headers.Add("SOAPAction", "\"urn:schemas-upnp-org:service:ContentDirectory:1#Browse\"");
+                    var response = await client.PostAsync(fullUrl, content);
+                    if (response.IsSuccessStatusCode)
+                    {
+                        var responseString = await response.Content.ReadAsStringAsync();
+                        var soapDoc = XDocument.Parse(responseString);
+                        var resultNode = soapDoc.Descendants().FirstOrDefault(n => n.Name.LocalName == "Result");
+
+                        // Pass the 'isRoot' flag so we know which List to populate
+                        if (resultNode != null) ParseRemoteDidl(resultNode.Value, isRoot);
+                    }
+                }
+                _currentRemoteContainer = containerId;
+            }
+            catch (Exception ex) { Log($"Network Error: {ex.Message}"); }
+            finally { if (loading != null) loading.IsVisible = false; }
+        }
+
+        private void LoadContinueWatching()
+        {
+            ContinueWatchingItems.Clear();
+            if (Config.History == null) return;
+
+            // Filter by ServerName. (We keep a fallback to IP matching just in case you have older history entries)
+            var host = "";
+            try { host = new Uri(_remoteBaseUrl).Host; } catch { }
+
+            var recent = Config.History
+                .Where(h => h.ServerName == _currentServerName || (!string.IsNullOrEmpty(h.Url) && !string.IsNullOrEmpty(host) && h.Url.Contains(host)))
+                .OrderByDescending(h => h.LastPlayed)
+                .Take(10);
+
+            foreach (var hist in recent)
+            {
+                var item = new RemoteItem { Title = hist.Title, Url = hist.Url, IsFolder = false, ThumbnailUrl = hist.ThumbnailUrl, WatchProgress = hist.Progress, TypeIcon = "🎬" };
+                _ = item.LoadThumbnailAsync();
+                ContinueWatchingItems.Add(item);
+            }
+
+            var section = this.FindControl<StackPanel>("SectionContinueWatching");
+            if (section != null) section.IsVisible = ContinueWatchingItems.Count > 0;
+        }
+
+
+
+        private async Task FetchRandomRecommendationsAsync()
+        {
+            RandomItems.Clear();
+            try
+            {
+                // 1. Try deep scan first
+                var items = await FetchRecursiveUrlsAsync("0");
+
+                // 2. FALLBACK: Targeted Manual Crawl if deep scan blocked
+                if (items.Count == 0)
+                {
+                   
+                    items = await CrawlForMediaAsync("0", 0);
                 }
 
-                // UNCOMMENT THIS NOW:
-                var browser = new RemoteBrowser(device.ContentDirectoryUrl, device.BaseUrl, device.FriendlyName);
-                browser.Show();
+                var largeItems = items.Where(x => x.Size > 10485760).ToList();
+                if (largeItems.Count == 0) largeItems = items.Where(x => !x.IsFolder).ToList();
 
-                Log($"Opening browser for: {device.FriendlyName}");
+                var random = new Random();
+                var shuffled = largeItems.OrderBy(x => random.Next()).Take(15).ToList();
+
+                Dispatcher.UIThread.InvokeAsync(() => {
+                    foreach (var item in shuffled)
+                    {
+                        item.TypeIcon = "🎬";
+                        item.IsFolder = false;
+                        if (!string.IsNullOrEmpty(item.ThumbnailUrl)) _ = item.LoadThumbnailAsync();
+                        RandomItems.Add(item);
+                    }
+
+                    var section = this.FindControl<StackPanel>("SectionRecommendations");
+                    if (section != null) section.IsVisible = RandomItems.Count > 0;
+                });
             }
+            catch { }
+        }
+
+
+
+        
+
+
+
+        // --- NEW HELPER: Fetch Direct Children (Shallow Crawl) ---
+        private async Task<List<RemoteItem>> FetchDirectChildrenAsync(string containerId)
+        {
+            var itemsList = new List<RemoteItem>();
+            try
+            {
+                string fullUrl = _remoteBaseUrl.TrimEnd('/') + "/" + _remoteControlUrl.TrimStart('/');
+                // Changed RequestedCount to 0 (Some UPnP servers reject requests that try to paginate)
+                string soap = $@"<?xml version=""1.0""?>
+<s:Envelope xmlns:s=""http://schemas.xmlsoap.org/soap/envelope/"" s:encodingStyle=""http://schemas.xmlsoap.org/soap/encoding/"">
+  <s:Body>
+    <u:Browse xmlns:u=""urn:schemas-upnp-org:service:ContentDirectory:1"">
+      <ObjectID>{containerId}</ObjectID>
+      <BrowseFlag>BrowseDirectChildren</BrowseFlag>
+      <Filter>*</Filter>
+      <StartingIndex>0</StartingIndex>
+      <RequestedCount>0</RequestedCount>
+      <SortCriteria></SortCriteria>
+    </u:Browse>
+  </s:Body>
+</s:Envelope>";
+
+                using (var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) })
+                {
+                    var content = new StringContent(soap, Encoding.UTF8, "text/xml");
+                    content.Headers.Add("SOAPAction", "\"urn:schemas-upnp-org:service:ContentDirectory:1#Browse\"");
+                    var response = await client.PostAsync(fullUrl, content);
+
+                    if (response.IsSuccessStatusCode)
+                    {
+                        var responseString = await response.Content.ReadAsStringAsync();
+                        var soapDoc = XDocument.Parse(responseString);
+                        var resultNode = soapDoc.Descendants().FirstOrDefault(n => n.Name.LocalName == "Result");
+
+                        if (resultNode != null)
+                        {
+                            var doc = XDocument.Parse(resultNode.Value);
+                            var xmlItems = doc.Descendants().Where(e => e.Name.LocalName == "item");
+                            var xmlContainers = doc.Descendants().Where(e => e.Name.LocalName == "container");
+
+                            foreach (var c in xmlContainers)
+                            {
+                                var title = c.Elements().FirstOrDefault(e => e.Name.LocalName == "title")?.Value ?? "Folder";
+                                itemsList.Add(new RemoteItem { Id = c.Attribute("id")?.Value, Title = title, IsFolder = true });
+                            }
+
+                            foreach (var i in xmlItems)
+                            {
+                                var res = i.Elements().FirstOrDefault(e => e.Name.LocalName == "res");
+                                var title = i.Elements().FirstOrDefault(e => e.Name.LocalName == "title")?.Value ?? "Unknown";
+                                var thumbUrl = i.Elements().FirstOrDefault(e => e.Name.LocalName == "albumArtURI")?.Value;
+
+                                if (res != null && !string.IsNullOrEmpty(res.Value))
+                                {
+                                    if (!string.IsNullOrEmpty(thumbUrl) && !thumbUrl.StartsWith("http"))
+                                        thumbUrl = thumbUrl.StartsWith("/") ? _remoteBaseUrl.TrimEnd('/') + thumbUrl : _remoteBaseUrl.TrimEnd('/') + "/" + thumbUrl;
+
+                                    var sizeAttr = res.Attribute("size")?.Value;
+                                    long.TryParse(sizeAttr ?? "0", out long sizeBytes);
+
+                                    itemsList.Add(new RemoteItem { Url = res.Value, Title = title, Size = sizeBytes, ThumbnailUrl = thumbUrl, IsFolder = false, TypeIcon = "🎬" });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            catch { }
+            return itemsList;
+        }
+
+        private async Task<List<RemoteItem>> CrawlForMediaAsync(string containerId, int depth)
+        {
+            var results = new List<RemoteItem>();
+
+            // Increased Depth to 4 to cut through deeply nested mobile trees (Root > Video > All Video > Files)
+            if (depth > 4 || results.Count > 30) return results;
+
+            var children = await FetchDirectChildrenAsync(containerId);
+            results.AddRange(children.Where(c => !c.IsFolder));
+
+            // Smart Crawler: Prioritize folders named "Video", "Movie", or "All"
+            var foldersToCrawl = children.Where(c => c.IsFolder)
+                .OrderByDescending(c => c.Title.Contains("Video", StringComparison.OrdinalIgnoreCase) || c.Title.Contains("All", StringComparison.OrdinalIgnoreCase))
+                .Take(3);
+
+            foreach (var folder in foldersToCrawl)
+            {
+                var subFiles = await CrawlForMediaAsync(folder.Id, depth + 1);
+                results.AddRange(subFiles);
+                if (results.Count >= 30) break;
+            }
+            return results;
+        }
+
+        // --- SEE ALL BUTTON HANDLERS ---
+        private void BtnSeeAllHistory_Click(object sender, RoutedEventArgs e)
+        {
+            if (Breadcrumbs.Count > 0) Breadcrumbs.Last().IsLast = false;
+            Breadcrumbs.Add(new BreadcrumbItem { Id = "HISTORY_ALL", Title = "Continue Watching", IsNotFirst = true, IsLast = true });
+
+            LoadRemoteFolder("HISTORY_ALL");
+
+            var host = "";
+            try { host = new Uri(_remoteBaseUrl).Host; } catch { }
+
+            var allHistory = Config.History
+                .Where(h => h.ServerName == _currentServerName || (!string.IsNullOrEmpty(h.Url) && !string.IsNullOrEmpty(host) && h.Url.Contains(host)))
+                .OrderByDescending(h => h.LastPlayed);
+
+            foreach (var hist in allHistory)
+            {
+                var item = new RemoteItem { Title = hist.Title, Url = hist.Url, IsFolder = false, ThumbnailUrl = hist.ThumbnailUrl, WatchProgress = hist.Progress, TypeIcon = "🎬" };
+                _ = item.LoadThumbnailAsync();
+                RemoteItems.Add(item);
+            }
+        }
+
+        private void BtnSeeAllRandom_Click(object sender, RoutedEventArgs e)
+        {
+            if (Breadcrumbs.Count > 0) Breadcrumbs.Last().IsLast = false;
+            Breadcrumbs.Add(new BreadcrumbItem { Id = "RANDOM_ALL", Title = "Discover", IsNotFirst = true, IsLast = true });
+
+            LoadRemoteFolder("RANDOM_ALL");
+            foreach (var item in RandomItems) RemoteItems.Add(item);
+        }
+
+        // --- CONTEXT MENU CLICK HANDLERS ---
+        private void CtxMenuPlay_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is MenuItem menuItem && menuItem.DataContext is RemoteItem item)
+                PlayUrlsInVlc(new List<RemoteItem> { item });
+        }
+
+        private void CtxMenuRemoveHistory_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is MenuItem menuItem && menuItem.DataContext is RemoteItem item)
+            {
+                var match = Config.History?.FirstOrDefault(h => h.Url == item.Url);
+                if (match != null)
+                {
+                    Config.History.Remove(match);
+                    SaveConfig();
+                }
+
+                if (ContinueWatchingItems.Contains(item)) ContinueWatchingItems.Remove(item);
+                if (RemoteItems.Contains(item)) RemoteItems.Remove(item); // Remove if inside "See All" view
+
+                var section = this.FindControl<StackPanel>("SectionContinueWatching");
+                if (section != null) section.IsVisible = ContinueWatchingItems.Count > 0;
+            }
+        }
+
+        private void SwitchToSeeAllView()
+        {
+            var homeView = this.FindControl<ScrollViewer>("RemoteHomeScroller");
+            var folderView = this.FindControl<Panel>("RemoteFolderView");
+            var btnBack = this.FindControl<Button>("BtnRemoteBack");
+
+            if (homeView != null) homeView.IsVisible = false;
+            if (folderView != null) folderView.IsVisible = true;
+            if (btnBack != null) btnBack.IsVisible = true;
+
+            _remoteHistory.Push("0"); // "0" tells the Back button to go to Home Page
+        }
+
+       
+
+
+
+
+        // Add this brand new method to handle peeking inside folders for images
+        private async Task FetchFolderThumbnailAsync(RemoteItem folderItem)
+        {
+            if (string.IsNullOrEmpty(folderItem.Id)) return;
+
+            try
+            {
+                string fullUrl = _remoteBaseUrl.TrimEnd('/') + "/" + _remoteControlUrl.TrimStart('/');
+                // Request exactly 1 child item to grab its thumbnail for the folder cover
+                string soap = $@"<?xml version=""1.0""?>
+        <s:Envelope xmlns:s=""http://schemas.xmlsoap.org/soap/envelope/"" s:encodingStyle=""http://schemas.xmlsoap.org/soap/encoding/"">
+          <s:Body>
+            <u:Browse xmlns:u=""urn:schemas-upnp-org:service:ContentDirectory:1"">
+              <ObjectID>{folderItem.Id}</ObjectID>
+              <BrowseFlag>BrowseDirectChildren</BrowseFlag>
+              <Filter>*</Filter>
+              <StartingIndex>0</StartingIndex>
+              <RequestedCount>1</RequestedCount>
+              <SortCriteria></SortCriteria>
+            </u:Browse>
+          </s:Body>
+        </s:Envelope>";
+
+                using (var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) })
+                {
+                    var content = new StringContent(soap, Encoding.UTF8, "text/xml");
+                    content.Headers.Add("SOAPAction", "\"urn:schemas-upnp-org:service:ContentDirectory:1#Browse\"");
+                    var response = await client.PostAsync(fullUrl, content);
+
+                    if (response.IsSuccessStatusCode)
+                    {
+                        var responseString = await response.Content.ReadAsStringAsync();
+                        var soapDoc = XDocument.Parse(responseString);
+                        var resultNode = soapDoc.Descendants().FirstOrDefault(n => n.Name.LocalName == "Result");
+                        if (resultNode != null)
+                        {
+                            var innerDoc = XDocument.Parse(resultNode.Value);
+                            var firstItem = innerDoc.Descendants().FirstOrDefault(e => e.Name.LocalName == "item");
+                            if (firstItem != null)
+                            {
+                                string thumbUrl = firstItem.Elements().FirstOrDefault(e => e.Name.LocalName == "albumArtURI")?.Value;
+                                if (!string.IsNullOrEmpty(thumbUrl))
+                                {
+                                    if (!thumbUrl.StartsWith("http"))
+                                    {
+                                        thumbUrl = thumbUrl.StartsWith("/") ? _remoteBaseUrl.TrimEnd('/') + thumbUrl : _remoteBaseUrl.TrimEnd('/') + "/" + thumbUrl;
+                                    }
+                                    folderItem.ThumbnailUrl = thumbUrl;
+                                    await folderItem.LoadThumbnailAsync();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            catch { /* Ignore failures to gracefully fall back to default icon */ }
+        }
+
+        // --- UI BUTTON EVENTS ---
+        private void BtnRemoteBack_Click(object sender, RoutedEventArgs e)
+        {
+            if (_remoteHistory.Count > 0) LoadRemoteFolder(_remoteHistory.Pop());
+        }
+
+        private void BtnCloseRemote_Click(object sender, RoutedEventArgs e)
+        {
+            var tabRemote = this.FindControl<Grid>("TabRemoteBrowser");
+            if (tabRemote != null) tabRemote.IsVisible = false;
+
+            var tabServers = this.FindControl<Grid>("TabServers");
+            if (tabServers != null) tabServers.IsVisible = true;
+
+            Breadcrumbs.Clear(); // Replaces _remoteHistory.Clear()
+            RemoteItems.Clear();
+        }
+
+        private void BtnRemoteToggleView_Click(object sender, RoutedEventArgs e)
+        {
+            _isListView = !_isListView;
+
+            // Save to Config
+            Config.IsListView = _isListView;
+            SaveConfig();
+
+            UpdateViewMode();
+        }
+
+        private void ListRemoteFiles_DoubleTapped2(object sender, Avalonia.Input.TappedEventArgs e)
+        {
+            if (sender is ListBox list && list.SelectedItem is RemoteItem item)
+            {
+                if (item.IsFolder)
+                {
+                    if (Breadcrumbs.Count > 0) Breadcrumbs.Last().IsLast = false;
+                    Breadcrumbs.Add(new BreadcrumbItem { Id = item.Id, Title = item.Title, IsNotFirst = true, IsLast = true });
+                    LoadRemoteFolder(item.Id);
+                }
+                else
+                {
+                    PlayUrlsInVlc(new List<RemoteItem> { item });
+                }
+            }
+        }
+        private void BtnBreadcrumb_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button btn && btn.Tag is string id)
+            {
+                var item = Breadcrumbs.FirstOrDefault(b => b.Id == id);
+                if (item == null || item.IsLast) return;
+
+                // Slice off the breadcrumbs after the clicked item
+                int index = Breadcrumbs.IndexOf(item);
+                while (Breadcrumbs.Count > index + 1) Breadcrumbs.RemoveAt(Breadcrumbs.Count - 1);
+
+                item.IsLast = true;
+                LoadRemoteFolder(id);
+            }
+        }
+
+        private async void BtnPlayAll_Click(object sender, RoutedEventArgs e)
+        {
+            var loading = this.FindControl<ProgressBar>("RemoteLoadingBar");
+            if (loading != null) loading.IsVisible = true;
+
+            var items = await FetchRecursiveUrlsAsync(_currentRemoteContainer);
+            if (items.Count > 0) PlayUrlsInVlc(items);
+            else Log("No playable files found.");
+
+            if (loading != null) loading.IsVisible = false;
+        }
+
+        private async void CtxPlaySelected_Click(object sender, RoutedEventArgs e)
+        {
+            var list = _isRemoteGridView ? this.FindControl<ListBox>("ListRemoteFiles_Grid") : this.FindControl<ListBox>("ListRemoteFiles_List");
+            if (list?.SelectedItems == null || list.SelectedItems.Count == 0) return;
+
+            var loading = this.FindControl<ProgressBar>("RemoteLoadingBar");
+            if (loading != null) loading.IsVisible = true;
+
+            var finalItems = new List<RemoteItem>();
+            foreach (RemoteItem item in list.SelectedItems)
+            {
+                if (item.IsFolder) finalItems.AddRange(await FetchRecursiveUrlsAsync(item.Id));
+                else if (!string.IsNullOrEmpty(item.Url)) finalItems.Add(item);
+            }
+
+            if (finalItems.Count > 0) PlayUrlsInVlc(finalItems);
+            else Log("No playable files in selection.");
+
+            if (loading != null) loading.IsVisible = false;
+        }
+
+        private async Task<List<RemoteItem>> FetchRecursiveUrlsAsync(string containerId)
+        {
+            var itemsList = new List<RemoteItem>();
+            try
+            {
+                string fullUrl = _remoteBaseUrl.TrimEnd('/') + "/" + _remoteControlUrl.TrimStart('/');
+                string soap = $@"<?xml version=""1.0""?>
+<s:Envelope xmlns:s=""http://schemas.xmlsoap.org/soap/envelope/"" s:encodingStyle=""http://schemas.xmlsoap.org/soap/encoding/"">
+  <s:Body>
+    <u:Browse xmlns:u=""urn:schemas-upnp-org:service:ContentDirectory:1"">
+      <ObjectID>{containerId}</ObjectID>
+      <BrowseFlag>BrowseRecursive</BrowseFlag>
+      <Filter>*</Filter>
+      <StartingIndex>0</StartingIndex>
+      <RequestedCount>0</RequestedCount>
+      <SortCriteria></SortCriteria>
+    </u:Browse>
+  </s:Body>
+</s:Envelope>";
+
+                using (var client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) })
+                {
+                    var content = new StringContent(soap, Encoding.UTF8, "text/xml");
+                    content.Headers.Add("SOAPAction", "\"urn:schemas-upnp-org:service:ContentDirectory:1#Browse\"");
+                    var response = await client.PostAsync(fullUrl, content);
+
+                    if (response.IsSuccessStatusCode)
+                    {
+                        var responseString = await response.Content.ReadAsStringAsync();
+                        var soapDoc = XDocument.Parse(responseString);
+                        var resultNode = soapDoc.Descendants().FirstOrDefault(n => n.Name.LocalName == "Result");
+
+                        if (resultNode != null)
+                        {
+                            var doc = XDocument.Parse(resultNode.Value);
+                            var xmlItems = doc.Descendants().Where(e => e.Name.LocalName == "item");
+
+                            foreach (var i in xmlItems)
+                            {
+                                var res = i.Elements().FirstOrDefault(e => e.Name.LocalName == "res");
+                                var title = i.Elements().FirstOrDefault(e => e.Name.LocalName == "title")?.Value ?? "Unknown File";
+                                var thumbUrl = i.Elements().FirstOrDefault(e => e.Name.LocalName == "albumArtURI")?.Value;
+
+                                if (res != null && !string.IsNullOrEmpty(res.Value))
+                                {
+                                    // Fix thumbnail absolute URL
+                                    if (!string.IsNullOrEmpty(thumbUrl) && !thumbUrl.StartsWith("http"))
+                                        thumbUrl = thumbUrl.StartsWith("/") ? _remoteBaseUrl.TrimEnd('/') + thumbUrl : _remoteBaseUrl.TrimEnd('/') + "/" + thumbUrl;
+
+                                    // Safely extract file size
+                                    var sizeAttr = res.Attribute("size")?.Value;
+                                    long.TryParse(sizeAttr ?? "0", out long sizeBytes);
+
+                                    itemsList.Add(new RemoteItem
+                                    {
+                                        Url = res.Value,
+                                        Title = title,
+                                        Size = sizeBytes,
+                                        ThumbnailUrl = thumbUrl
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex) { Log($"Fetch Error: {ex.Message}"); }
+            return itemsList;
+        }
+
+       
+
+        private void PlayUrlsInVlc(List<RemoteItem> items)
+        {
+            if (items == null || items.Count == 0) return;
+
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("#EXTM3U");
+            foreach (var item in items)
+            {
+                sb.AppendLine($"#EXTINF:-1,{item.Title}");
+                sb.AppendLine(item.Url);
+
+                // Update existing history or add new
+                var existing = Config.History.FirstOrDefault(h => h.Url == item.Url || h.Title == item.Title);
+                if (existing != null)
+                {
+                    existing.LastPlayed = DateTime.Now;
+                    existing.Progress = 50;
+                    existing.ServerName = _currentServerName; // <-- Update the name
+                }
+                else
+                {
+                    Config.History.Add(new PlaybackHistory
+                    {
+                        Title = item.Title,
+                        Url = item.Url,
+                        ThumbnailUrl = item.ThumbnailUrl,
+                        Progress = 50,
+                        LastPlayed = DateTime.Now,
+                        ServerName = _currentServerName // <-- Save the name here
+                    });
+                }
+                item.WatchProgress = 50;
+            }
+
+            SaveConfig();
+
+            string tempPlaylist = Path.Combine(Path.GetTempPath(), $"LocalStream_{DateTime.Now.Ticks}.m3u");
+            System.IO.File.WriteAllText(tempPlaylist, sb.ToString());
+
+            string vlcPath = "vlc";
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                string[] paths = { @"C:\Program Files\VideoLAN\VLC\vlc.exe", @"C:\Program Files (x86)\VideoLAN\VLC\vlc.exe" };
+                foreach (var p in paths) if (System.IO.File.Exists(p)) { vlcPath = p; break; }
+
+                // Fallback check in Windows Registry
+                if (vlcPath == "vlc")
+                {
+                    try
+                    {
+                        using (var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SOFTWARE\VideoLAN\VLC"))
+                            if (key?.GetValue("InstallDir") is string dir && System.IO.File.Exists(Path.Combine(dir, "vlc.exe")))
+                                vlcPath = Path.Combine(dir, "vlc.exe");
+                    }
+                    catch { }
+                }
+            }
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            {
+                vlcPath = "/Applications/VLC.app/Contents/MacOS/VLC";
+            }
+
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = vlcPath,
+                    Arguments = $"\"{tempPlaylist}\"",
+                    UseShellExecute = false
+                });
+            }
+            catch (Exception ex) { Log($"VLC Error: {ex.Message}. Make sure VLC is installed."); }
         }
 
         // ===========================
@@ -392,10 +1284,22 @@ namespace LocalStreamPC
             catch (Exception ex) { Log("Startup Error: " + ex.Message); }
         }
 
-        // ===========================
+    
         //    SERVER & CONFIG LOGIC
-        // ===========================
+      
 
+
+        public class PlaybackHistory
+        {
+            public string Title { get; set; }
+            public string Url { get; set; }
+            public string ThumbnailUrl { get; set; }
+            public double Progress { get; set; }
+            public DateTime LastPlayed { get; set; }
+            public string ServerName { get; set; }
+        }
+
+    
         public class AppConfig
         {
             public List<string> SharedFolders { get; set; } = new List<string>();
@@ -404,6 +1308,24 @@ namespace LocalStreamPC
             public bool MinimizeToTray { get; set; } = false;
             public bool AutoStartServer { get; set; } = false;
             public bool IsDarkMode { get; set; } = true;
+
+            public bool EnableAuth { get; set; } = false;
+            public bool AllowDeletion { get; set; } = false;
+
+         
+
+            public string AdminUsername { get; set; } = "admin";
+            public string AdminPassword { get; set; } = "admin123";
+            public string ViewerUsername { get; set; } = "viewer";
+            public string ViewerPassword { get; set; } = "guest";
+
+
+            public int GridSizeIndex { get; set; } = 2; 
+            public bool IsListView { get; set; } = false;
+
+
+
+            public List<PlaybackHistory> History { get; set; } = new List<PlaybackHistory>();
         }
 
         // 1. UPDATE LOAD CONFIG
@@ -428,53 +1350,202 @@ namespace LocalStreamPC
             ListSharedFolders.ItemsSource = null;
             ListSharedFolders.ItemsSource = Config.SharedFolders;
 
+            CmbGridSize.SelectedIndex = Config.GridSizeIndex;
+            _isListView = Config.IsListView;
+            UpdateViewMode();
+
             TxtPort.Text = Config.Port.ToString();
             ChkRunAtStartup.IsChecked = Config.RunAtStartup;
             ChkMinimizeToTray.IsChecked = Config.MinimizeToTray;
             ChkAutoStartServer.IsChecked = Config.AutoStartServer;
             ApplyTheme(Config.IsDarkMode);
 
+
+            ChkEnableAuth.IsChecked = Config.EnableAuth;
+            ChkAllowDeletion.IsChecked = Config.AllowDeletion;
+            TxtAdminPassword.Text = Config.AdminPassword;
+            TxtViewerPassword.Text = Config.ViewerPassword;
+            TxtAdminUsername.Text = Config.AdminUsername; 
+            TxtViewerUsername.Text = Config.ViewerUsername;
+
             // Auto-Start Logic
             if (Config.AutoStartServer && Config.SharedFolders.Count > 0)
             {
-                Log("🚀 Auto-starting Server...");
+                Log(" Auto-starting Server...");
                 BtnToggleServer_Click(null, null);
+            }
+        }
+        private void UpdateViewMode()
+        {
+            var grid = this.FindControl<ListBox>("ListRemoteFiles_Grid");
+            var list = this.FindControl<ListBox>("ListRemoteFiles_List");
+
+            if (grid != null) grid.IsVisible = !_isListView;
+            if (list != null) list.IsVisible = _isListView;
+        }
+        // Helper: Calculate Folder Size
+        private long GetDirectorySize(string folderPath)
+        {
+            try
+            {
+                DirectoryInfo di = new DirectoryInfo(folderPath);
+                // We only scan top-level files to prevent server freeze on massive hard drives
+                return di.EnumerateFiles("*", SearchOption.TopDirectoryOnly).Sum(fi => fi.Length);
+            }
+            catch { return 0; }
+        }
+
+        // Helper: Delete File/Folder Endpoint
+        private void HandleDeleteFile(HttpListenerContext context)
+        {
+            try
+            {
+                if (!Config.AllowDeletion)
+                {
+                    Log(" Delete blocked: 'Allow Admin to Delete' is unchecked in Settings.");
+                    context.Response.StatusCode = 403; // Forbidden
+                    return;
+                }
+
+                string pathParam = context.Request.QueryString["path"] ?? "";
+                if (string.IsNullOrEmpty(pathParam) || pathParam.Contains(".."))
+                {
+                    Log("Delete blocked: Invalid path requested.");
+                    context.Response.StatusCode = 400;
+                    return;
+                }
+
+                // Security check
+                if (!Config.SharedFolders.Any(root => pathParam.StartsWith(root, StringComparison.OrdinalIgnoreCase)))
+                {
+                    Log($" Delete blocked: Path '{pathParam}' is outside your shared folders.");
+                    context.Response.StatusCode = 403;
+                    return;
+                }
+
+                if (File.Exists(pathParam))
+                {
+                    File.Delete(pathParam);
+                    Log($" Deleted file: {Path.GetFileName(pathParam)}");
+                }
+                else if (Directory.Exists(pathParam))
+                {
+                    Directory.Delete(pathParam, true);
+                    Log($" Deleted folder: {Path.GetFileName(pathParam)}");
+                }
+                else
+                {
+                    Log($"Delete failed: Item not found on disk ({pathParam})");
+                }
+
+                context.Response.StatusCode = 200;
+            }
+            catch (Exception ex)
+            {
+                Log($" Delete Error: {ex.Message}");
+                context.Response.StatusCode = 500;
+            }
+            finally
+            {
+                context.Response.Close();
             }
         }
 
 
+        private string AuthenticateUser(HttpListenerContext context)
+        {
+            if (!Config.EnableAuth) return "Admin";
+
+            string authHeader = context.Request.Headers["Authorization"];
+            if (authHeader != null && authHeader.StartsWith("Basic"))
+            {
+                string encoded = authHeader.Substring("Basic ".Length).Trim();
+                Encoding encoding = Encoding.GetEncoding("iso-8859-1");
+                string usernamePassword = encoding.GetString(Convert.FromBase64String(encoded));
+                int sepIndex = usernamePassword.IndexOf(':');
+
+                string username = usernamePassword.Substring(0, sepIndex);
+                string password = usernamePassword.Substring(sepIndex + 1);
+
+                
+                if (username.Equals(Config.AdminUsername, StringComparison.OrdinalIgnoreCase) && password == Config.AdminPassword) return "Admin";
+                if (username.Equals(Config.ViewerUsername, StringComparison.OrdinalIgnoreCase) && password == Config.ViewerPassword) return "Viewer";
+            }
+
+            context.Response.StatusCode = 401;
+            context.Response.AddHeader("WWW-Authenticate", "Basic realm=\"LocalStream Secure Login\"");
+            context.Response.Close();
+            return null;
+        }
+
+        private void BtnToggleAdminPwd_Click(object sender, Avalonia.Interactivity.RoutedEventArgs e)
+        {
+            if (sender is Button btn && btn.Content is Avalonia.Controls.TextBlock txt)
+            {
+                if (TxtAdminPassword.PasswordChar == '*')
+                {
+                    TxtAdminPassword.PasswordChar = '\0'; // Show password
+                    txt.Text = "🙈"; // Change icon
+                }
+                else
+                {
+                    TxtAdminPassword.PasswordChar = '*'; // Hide password
+                    txt.Text = "👁️"; // Change icon back
+                }
+            }
+        }
+
+        private void BtnToggleViewerPwd_Click(object sender, Avalonia.Interactivity.RoutedEventArgs e)
+        {
+            if (sender is Button btn && btn.Content is Avalonia.Controls.TextBlock txt)
+            {
+                if (TxtViewerPassword.PasswordChar == '*')
+                {
+                    TxtViewerPassword.PasswordChar = '\0';
+                    txt.Text = "🙈";
+                }
+                else
+                {
+                    TxtViewerPassword.PasswordChar = '*';
+                    txt.Text = "👁️";
+                }
+            }
+        }
+
 
         private void BtnToggleTheme_Click(object sender, RoutedEventArgs e)
         {
-            // Toggle the boolean
+            
             Config.IsDarkMode = !Config.IsDarkMode;
 
-            // Apply visual change
+       
             ApplyTheme(Config.IsDarkMode);
 
-            // Save immediately so it persists
+         
             SaveConfig();
         }
 
         private void ApplyTheme(bool isDark)
         {
+            var themePath = this.FindControl<Avalonia.Controls.Shapes.Path>("ThemeIconPath");
+
             if (isDark)
             {
                 RequestedThemeVariant = Avalonia.Styling.ThemeVariant.Dark;
-                BtnToggleTheme.Content = "🌙 Dark Mode";
+                ToolTip.SetTip(BtnToggleTheme, "Switch to Light Mode");
+                if (themePath != null) themePath.Data = Avalonia.Media.Geometry.Parse("M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"); // Moon
 
-                // FIXED: Use 'Brush.Parse' (singular), not 'Brushes.Parse'
                 BtnToggleTheme.Background = Avalonia.Media.Brush.Parse("#374151");
-                BtnToggleTheme.Foreground = Avalonia.Media.Brushes.White;
+                if (themePath != null) themePath.Stroke = Avalonia.Media.Brushes.White;
             }
             else
             {
                 RequestedThemeVariant = Avalonia.Styling.ThemeVariant.Light;
-                BtnToggleTheme.Content = "☀️ Light Mode";
+                ToolTip.SetTip(BtnToggleTheme, "Switch to Dark Mode");
+                if (themePath != null) themePath.Data = Avalonia.Media.Geometry.Parse("M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10z"); // Sun
 
-                // FIXED: Use 'Brush.Parse' (singular)
                 BtnToggleTheme.Background = Avalonia.Media.Brush.Parse("#E5E7EB");
-                BtnToggleTheme.Foreground = Avalonia.Media.Brushes.Black;
+                if (themePath != null) themePath.Stroke = Avalonia.Media.Brushes.Black;
             }
         }
 
@@ -488,17 +1559,32 @@ namespace LocalStreamPC
                 BtnToggleServer.Content = "Start Server";
                 BtnToggleServer.Background = Avalonia.Media.Brushes.ForestGreen;
                 _isServerRunning = false;
+
+                ActiveServerUrls.Clear(); // Clear the IPs when stopped
             }
             else
             {
-                // Fix: Check List count instead of TxtFolderPath
                 if (Config.SharedFolders.Count == 0)
                 {
-                    Log("⚠️ Please add at least one folder first.");
+                    Log("Please add at least one folder first.");
                     return;
                 }
 
-                _localIp = GetLocalIpAddress();
+                RefreshActiveNetworkIps();
+
+                
+                ActiveServerUrls.Clear();
+                foreach (var item in _localIps)
+                {
+                    ActiveServerUrls.Add(new ServerUrlItem
+                    {
+                        NetworkName = item.Name,
+                        Url = $"http://{item.Ip}:{Config.Port}/"
+                    });
+                }
+
+                Log($"App initialized on networks: {string.Join(", ", _localIps.Select(i => i.Ip))}");
+
                 BtnToggleServer.Content = "Stop Server";
                 BtnToggleServer.Background = Avalonia.Media.Brushes.Crimson;
                 _isServerRunning = true;
@@ -515,6 +1601,37 @@ namespace LocalStreamPC
             }
         }
 
+        private async void BtnCopySpecificIp_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button btn && btn.Tag is string url)
+            {
+                try
+                {
+                    // Avalonia 11 Clipboard API
+                    var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
+                    if (clipboard != null)
+                    {
+                        await clipboard.SetTextAsync(url);
+
+                        // Visual feedback
+                        var oldContent = btn.Content;
+                        btn.Content = "Copied!";
+                        btn.Background = Avalonia.Media.Brushes.ForestGreen;
+
+                        await Task.Delay(2000);
+
+                        // Reset button
+                        btn.Content = oldContent;
+                        btn.Background = Avalonia.Media.Brush.Parse("#3B82F6");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log($"Failed to copy to clipboard: {ex.Message}");
+                }
+            }
+        }
+
         private void SaveConfig()
         {
             // 1. FOLDERS: No need to save manually here. 
@@ -526,6 +1643,13 @@ namespace LocalStreamPC
             Config.MinimizeToTray = ChkMinimizeToTray.IsChecked == true;
             Config.AutoStartServer = ChkAutoStartServer.IsChecked == true;
 
+            Config.EnableAuth = ChkEnableAuth.IsChecked == true;
+            Config.AllowDeletion = ChkAllowDeletion.IsChecked == true;
+            Config.AdminPassword = TxtAdminPassword.Text;
+            Config.ViewerPassword = TxtViewerPassword.Text;
+            Config.AdminUsername = TxtAdminUsername.Text;
+            Config.ViewerUsername = TxtViewerUsername.Text;
+
             // 3. WRITE TO FILE
             try
             {
@@ -534,7 +1658,7 @@ namespace LocalStreamPC
             }
             catch (Exception ex) { Log("Error saving settings: " + ex.Message); }
 
-            SetStartup(Config.RunAtStartup);
+          
         }
 
         // ===========================
@@ -549,7 +1673,7 @@ namespace LocalStreamPC
             try
             {
                 _httpListener.Start();
-                Log($"** HTTP Server active at http://{_localIp}:{Config.Port}/");
+                Log($"HTTP Server active on Port {Config.Port} (All Interfaces)");
             }
             catch (HttpListenerException ex)
             {
@@ -591,13 +1715,24 @@ namespace LocalStreamPC
             string rawUrl = context.Request.Url.AbsolutePath;
             string method = context.Request.HttpMethod;
 
+            bool isUpnp = rawUrl.Contains("/description.xml") ||
+                   rawUrl.Contains("/scpd/") ||
+                   rawUrl.Contains("/control/") ||
+                   rawUrl.StartsWith("/thumb/") || 
+                   rawUrl.StartsWith("/file/");
+            string userRole = isUpnp ? "Viewer" : AuthenticateUser(context);
+
+            if (userRole == null && !isUpnp) return;
+
             try
             {
                 if (rawUrl == "/")
                 {
                     string relativePath = context.Request.QueryString["path"] ?? "";
-                    ServeWebBrowser(context, relativePath);
+                    ServeWebBrowser(context, relativePath, userRole); // Pass the role here!
                 }
+                else if (rawUrl == "/upload" && method == "POST" && userRole == "Admin") HandleFileUpload(context);
+                else if (rawUrl == "/delete" && method == "POST" && userRole == "Admin") HandleDeleteFile(context);
                 else if (rawUrl == "/upload" && method == "POST") HandleFileUpload(context);
                 else if (rawUrl == "/zip") ServeZipDownload(context);
                 else if (rawUrl == "/description.xml") ServeDeviceDescription(context);
@@ -632,7 +1767,7 @@ namespace LocalStreamPC
 
                 if (!System.IO.File.Exists(fullPath))
                 {
-                    Log($"❌ Thumb 404: File not found {fullPath}");
+                    Log($" Thumb 404: File not found {fullPath}");
                     context.Response.StatusCode = 404;
                     context.Response.Close();
                     return;
@@ -677,7 +1812,7 @@ namespace LocalStreamPC
                     }
                     catch (Exception ex)
                     {
-                        Log($"⚠️ Image Resize Failed (Sending Original): {ex.Message}");
+                        Log($" Image Resize Failed (Sending Original): {ex.Message}");
                         // Fallback: Just send the original file if resizing crashes
                         imageBytes = await System.IO.File.ReadAllBytesAsync(fullPath);
                     }
@@ -723,7 +1858,7 @@ namespace LocalStreamPC
                     }
                     catch (Exception ex)
                     {
-                        Log($"❌ FFmpeg Error: {ex.Message}");
+                        Log($" FFmpeg Error: {ex.Message}");
                     }
                     finally
                     {
@@ -749,7 +1884,7 @@ namespace LocalStreamPC
             }
             catch (Exception ex)
             {
-                Log($"🔥 Critical Thumb Error: {ex.Message}");
+                Log($" Critical Thumb Error: {ex.Message}");
                 context.Response.StatusCode = 500;
             }
             finally
@@ -795,7 +1930,7 @@ namespace LocalStreamPC
                 }
             }
 
-            Log("🛑 Server stopped.");
+            Log("Server stopped.");
         }
         // ===========================
         //    NETWORKING HELPERS
@@ -816,176 +1951,303 @@ namespace LocalStreamPC
 
         }
 
-        private void ServeWebBrowser(HttpListenerContext context, string pathParam)
+        private void ServeWebBrowser(HttpListenerContext context, string pathParam, string userRole)
         {
-            // 1. Sanitize
             if (pathParam.Contains("..")) pathParam = "";
-
-            // 2. VIRTUAL ROOT: If path is empty, show Shared Folders
-            if (string.IsNullOrEmpty(pathParam))
-            {
-                var sb = new StringBuilder();
-                sb.Append("<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>");
-                sb.Append("<title>LocalStream Root</title>");
-                // Reuse styles
-                sb.Append("<style>body{font-family:'Segoe UI',sans-serif;background:#f0f2f5;padding:20px} .item{background:white;padding:15px;margin-bottom:10px;border-radius:8px;display:flex;align-items:center;gap:15px;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,0.1)} .item:hover{background:#fff} .icon{font-size:1.5em} a{text-decoration:none;color:#333;font-weight:600;flex-grow:1}</style>");
-                sb.Append("</head><body>");
-
-                sb.Append("<h1>📡 Shared Libraries</h1>");
-
-                foreach (var folder in Config.SharedFolders)
-                {
-                    if (!Directory.Exists(folder)) continue;
-                    var info = new DirectoryInfo(folder);
-                    string link = $"/?path={WebUtility.UrlEncode(folder)}";
-
-                    sb.Append($"<div class='item' onclick=\"window.location='{link}'\">");
-                    sb.Append("<span class='icon'>💽</span>");
-                    sb.Append($"<a href='{link}'>{info.Name}</a>");
-                    sb.Append($"<span style='color:#888;font-size:0.8em'>{folder}</span>");
-                    sb.Append("</div>");
-                }
-
-                if (Config.SharedFolders.Count == 0) sb.Append("<p>No folders shared. Add them in the Server App.</p>");
-
-                sb.Append("</body></html>");
-
-                byte[] b = Encoding.UTF8.GetBytes(sb.ToString());
-                context.Response.ContentType = "text/html; charset=utf-8";
-                context.Response.ContentLength64 = b.Length;
-                context.Response.OutputStream.Write(b, 0, b.Length);
-                context.Response.Close();
-                return;
-            }
-
-            // 3. NORMAL BROWSING
+            bool isRoot = string.IsNullOrEmpty(pathParam);
             string currentPath = pathParam;
-            bool isAllowed = Config.SharedFolders.Any(root => currentPath.StartsWith(root, StringComparison.OrdinalIgnoreCase));
+            bool isAdmin = userRole == "Admin";
 
-            if (!isAllowed || !Directory.Exists(currentPath))
+            if (!isRoot)
             {
-                context.Response.StatusCode = 404;
-                context.Response.Close();
-                return;
+                bool isAllowed = Config.SharedFolders.Any(root => currentPath.StartsWith(root, StringComparison.OrdinalIgnoreCase));
+                if (!isAllowed || !Directory.Exists(currentPath))
+                {
+                    context.Response.StatusCode = 404; context.Response.Close(); return;
+                }
             }
 
             var html = new StringBuilder();
-            html.Append("<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>");
-            html.Append($"<title>{new DirectoryInfo(currentPath).Name}</title>");
+            html.Append("<!DOCTYPE html><html data-theme='light'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>");
+            html.Append($"<title>LocalStream</title>");
             html.Append("<style>");
 
-            // CSS STYLES
-            html.Append("body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; margin: 0; padding: 20px; padding-bottom: 80px; }");
-            html.Append(".header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }");
-            html.Append("h1 { margin: 0; color: #333; font-size: 1.5rem; word-break: break-all; }");
-            html.Append(".btn { padding: 8px 15px; border: none; border-radius: 5px; cursor: pointer; font-weight: 500; text-decoration: none; color: white; display: inline-flex; align-items: center; justify-content: center; gap: 5px; }");
-            html.Append(".btn-primary { background: #007bff; } .btn-primary:hover { background: #0056b3; }");
-            html.Append(".btn-secondary { background: #6c757d; } .btn-secondary:hover { background: #545b62; }");
-            html.Append(".btn-success { background: #28a745; } .btn-success:hover { background: #218838; }");
+            // -- CSS Variables --
+            html.Append(":root { --bg: #f8fafc; --surface: #ffffff; --text: #0f172a; --text-muted: #64748b; --primary: #3b82f6; --primary-hover: #2563eb; --danger: #ef4444; --success: #10b981; --border: #e2e8f0; --radius: 12px; --grid-size: 200px; }");
+            html.Append("[data-theme='dark'] { --bg: #0f172a; --surface: #1e293b; --text: #f8fafc; --text-muted: #94a3b8; --border: #334155; }");
+
+            html.Append("body { font-family: system-ui, sans-serif; background: var(--bg); margin: 0; padding: 1.5rem; padding-bottom: 120px; color: var(--text); }");
+            html.Append("* { box-sizing: border-box; }");
+
+            // -- Global SVG Safety --
+            html.Append("svg { flex-shrink: 0; }");
+
+            // -- Top Bar & Controls --
+            html.Append(".breadcrumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 1.4rem; font-weight: 600; margin-bottom: 1.5rem; }");
+            html.Append(".breadcrumbs a { color: var(--primary); text-decoration: none; padding: 4px 8px; border-radius: 8px; transition: 0.2s; display: flex; align-items: center; gap: 6px; }");
+            html.Append(".breadcrumbs a:hover { background: rgba(59, 130, 246, 0.1); }");
+            html.Append(".breadcrumbs span { color: var(--text-muted); }");
+
+            html.Append(".top-bar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 1.5rem; background: var(--surface); padding: 1rem 1.5rem; border-radius: var(--radius); border: 1px solid var(--border); }");
+            // Explicit flex controls to prevent "v i d e o" vertical wrapping
+            html.Append("h1 { margin: 0; font-size: 1.3rem; display: flex; align-items: center; gap: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }");
+            html.Append(".controls { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; }");
+
+            html.Append(".input-group { display: flex; align-items: center; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 0 10px; }");
+            html.Append(".search-input, .select-dropdown { border: none; background: transparent; padding: 10px; outline: none; color: var(--text); font-family: inherit; }");
+            html.Append(".select-dropdown { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }");
+
+            html.Append(".btn { padding: 8px 12px; border: none; border-radius: 8px; cursor: pointer; font-weight: 500; color: white; display: inline-flex; align-items: center; justify-content: center; gap: 6px; transition: 0.1s;}");
+            html.Append(".btn:active { transform: scale(0.98); }");
+            html.Append(".btn-primary { background: var(--primary); } .btn-success { background: var(--success); } .btn-danger { background: var(--danger); }");
+            html.Append(".btn-secondary { background: var(--bg); color: var(--text); border: 1px solid var(--border); }");
+            html.Append(".icon-btn { padding: 8px 10px; border-radius: 8px; background: var(--surface); color: var(--text); border: 1px solid var(--border); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: 0.2s; }");
+            html.Append(".icon-btn:hover { background: var(--bg); }");
+
+            // -- Layouts --
             html.Append(".container { display: flex; flex-direction: column; gap: 10px; }");
-            html.Append(".grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 15px; }");
-            html.Append(".item { background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); overflow: hidden; transition: transform 0.2s; position: relative; }");
-            html.Append(".item:hover { background: #f9f9f9; box-shadow: 0 4px 8px rgba(0,0,0,0.15); }");
-            html.Append(".checkbox { z-index: 10; cursor: pointer; }");
+            html.Append(".grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--grid-size), 1fr)); gap: 1.2rem; }");
 
-            // View Specific Styles
-            html.Append(".list .item { display: flex; align-items: center; padding: 10px; gap: 15px; }");
-            html.Append(".list .preview-box { display: none !important; }");
-            html.Append(".list .icon { font-size: 1.5em; width: 40px; text-align: center; }");
-            html.Append(".list .details { flex-grow: 1; display: flex; align-items: center; justify-content: space-between; overflow: hidden; }");
-            html.Append(".list .actions { display: flex; gap: 5px; margin-left: 10px; }");
+            html.Append(".item { background: var(--surface); border-radius: var(--radius); border: 1px solid var(--border); position: relative; overflow: hidden; display: flex; transition: outline 0.1s; }");
 
-            html.Append(".grid .item { display: flex; flex-direction: column; aspect-ratio: 3/4; }");
-            html.Append(".grid .list-only { display: none !important; }");
-            html.Append(".grid .checkbox { position: absolute; top: 8px; left: 8px; width: 20px; height: 20px; }");
-            html.Append(".grid .preview-box { flex-grow: 1; background: #eee; display: flex; justify-content: center; align-items: center; font-size: 3em; background-size: cover; background-position: center; }");
-            html.Append(".grid .details { padding: 10px; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid #eee; }");
-            html.Append(".grid .actions { display: flex; gap: 5px; margin-top: auto; }");
-            html.Append(".grid .actions .btn { flex: 1; }");
+            // --- CHECKBOX LOGIC (Fixed to keep actions visible) ---
+            html.Append(".checkbox { display: none; width: 22px; height: 22px; accent-color: var(--primary); cursor: pointer; flex-shrink: 0;}");
+            html.Append("body.select-mode .checkbox { display: block; }");
+            html.Append("body.select-mode .item { cursor: pointer; }");
+            html.Append(".item.selected { outline: 3px solid var(--primary); background: rgba(59,130,246,0.05); }");
 
-            html.Append(".name { text-decoration: none; color: #333; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }");
-            html.Append(".meta { color: #888; font-size: 0.85em; }");
+            html.Append(".preview-box { display: flex; justify-content: center; align-items: center; background: var(--bg); flex-shrink: 0; position: relative; }");
+            html.Append(".preview-img { width: 100%; height: 100%; object-fit: cover; position: absolute; top: 0; left: 0; }");
+
+            html.Append(".list .item { align-items: center; padding: 12px 16px; gap: 15px; }");
+            html.Append(".list .preview-box { width: 48px; height: 48px; border-radius: 8px; overflow: hidden; }");
+            html.Append(".list .details { flex-grow: 1; display: flex; justify-content: space-between; align-items: center; }");
+            html.Append(".list .details-wrapper { display: flex; align-items: center; gap: 12px; width: 100%; overflow: hidden; }");
+            html.Append(".list .actions { display: flex; gap: 8px; margin-left: 15px; }");
+
+            html.Append(".grid .item { flex-direction: column; height: 100%; }");
+            html.Append(".grid .preview-box { width: 100%; aspect-ratio: 16/9; border-bottom: 1px solid var(--border); }");
+            html.Append(".grid .details { padding: 12px; display: flex; flex-direction: column; gap: 10px; flex-grow: 1; }");
+            html.Append(".grid .details-wrapper { display: flex; align-items: center; gap: 10px; width: 100%; overflow: hidden; }");
+            html.Append(".grid .actions { display: flex; gap: 8px; margin-top: auto; width: 100%; }");
+
+            html.Append(".btn-action { flex: 1; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px; display: flex; align-items: center; justify-content: center; padding: 8px; transition: 0.2s; cursor:pointer;}");
+            html.Append(".btn-action:hover { background: var(--primary); color: white; }");
+            html.Append(".btn-danger-action:hover { background: var(--danger); color: white; border-color: var(--danger); }");
+
+            html.Append(".name { font-weight: 600; font-size: 0.95rem; text-decoration: none; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }");
+            html.Append(".meta { color: var(--text-muted); font-size: 0.8rem; margin-top: 4px; display:block;}");
+            html.Append(".list .grid-select-wrapper { display: none !important; }");
+
+            // -- BOTTOM SELECTION BAR (Fixed Visibility Logic) --
+            html.Append(".selection-bar { position:fixed; bottom:0; left:0; right:0; background:var(--surface); border-top:1px solid var(--border); padding:1rem 2rem; display:none; justify-content:space-between; align-items:center; z-index: 9999; box-shadow:0 -4px 15px rgba(0,0,0,0.1); }");
             html.Append("</style>");
 
-            // JS SCRIPTS
+            // -- Javascript --
             html.Append("<script>");
-            html.Append("function toggleView() { var c = document.getElementById('container'); var isGrid = c.classList.contains('grid'); c.className = isGrid ? 'container list' : 'container grid'; localStorage.setItem('viewMode', isGrid ? 'list' : 'grid'); }");
-            html.Append("function updateSelection() { var count = document.querySelectorAll('.file-check:checked').length; var bar = document.getElementById('selectionBar'); bar.style.display = count > 0 ? 'flex' : 'none'; document.getElementById('selCount').innerText = count + ' selected'; }");
-            html.Append("function downloadSelected() { var checks = document.querySelectorAll('.file-check:checked'); var files = []; checks.forEach(c => files.push(c.value)); if(files.length===0) return; window.location = '/zip?path=" + WebUtility.UrlEncode(currentPath) + "&files=' + encodeURIComponent(files.join('|')); }");
-            html.Append("function downloadAll() { window.location = '/zip?path=" + WebUtility.UrlEncode(currentPath) + "'; }");
-            html.Append("function uploadFiles() { document.getElementById('fileInput').click(); }");
-            html.Append("function handleUpload(input) { if(input.files.length === 0) return; var formData = new FormData(); for(var i=0; i<input.files.length; i++) formData.append('files', input.files[i]); fetch('/upload?path=" + WebUtility.UrlEncode(currentPath) + "', {method:'POST', body:formData}).then(r => window.location.reload()).catch(e => alert('Upload failed')); }");
-            html.Append("window.onload = function() { var mode = localStorage.getItem('viewMode') || 'list'; document.getElementById('container').className = 'container ' + mode; };");
+            html.Append("function initSettings() { var mode = localStorage.getItem('viewMode') || 'grid'; var theme = localStorage.getItem('theme') || 'light'; var gSize = localStorage.getItem('gridSize') || '200'; document.getElementById('container').className = 'container ' + mode; document.documentElement.setAttribute('data-theme', theme); if(document.getElementById('gridSizeSelect')) document.getElementById('gridSizeSelect').value = gSize; document.documentElement.style.setProperty('--grid-size', gSize + 'px'); sortItems(); }");
+            html.Append("function toggleTheme() { var next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'; document.documentElement.setAttribute('data-theme', next); localStorage.setItem('theme', next); }");
+            html.Append("function updateGridSize() { var val = document.getElementById('gridSizeSelect').value; document.documentElement.style.setProperty('--grid-size', val + 'px'); localStorage.setItem('gridSize', val); }");
+            html.Append("function toggleView() { var c = document.getElementById('container'); var next = c.classList.contains('grid') ? 'list' : 'grid'; c.className = 'container ' + next; localStorage.setItem('viewMode', next); }");
+
+            // Fixed Select Logic
+            html.Append("function toggleSelectMode() { var b = document.body; b.classList.toggle('select-mode'); var btn = document.getElementById('btnSelectMode'); if(b.classList.contains('select-mode')) { btn.style.background = 'var(--primary)'; btn.style.color = 'white'; } else { btn.style.background = ''; btn.style.color = ''; document.querySelectorAll('.file-check').forEach(c => c.checked = false); document.querySelectorAll('.item').forEach(i => i.classList.remove('selected')); updateSelection(); } }");
+
+            // Safely handles clicking the card vs clicking the play button
+            html.Append("function handleItemClick(e, el) { if(document.body.classList.contains('select-mode') && !e.target.closest('.btn-action')) { e.preventDefault(); var chk = el.querySelector('.file-check'); if(!chk) return; if(e.target !== chk) chk.checked = !chk.checked; if(chk.checked) el.classList.add('selected'); else el.classList.remove('selected'); updateSelection(); } else if(!e.target.closest('.btn-action') && el.dataset.href && !document.body.classList.contains('select-mode')) { window.location = el.dataset.href; } }");
+
+            html.Append("function handleCheckClick(e, chk) { e.stopPropagation(); var el = chk.closest('.item'); if(chk.checked) el.classList.add('selected'); else el.classList.remove('selected'); updateSelection(); }");
+
+            // Updates bottom bar display
+            html.Append("function updateSelection() { var count = document.querySelectorAll('.file-check:checked').length; var bar = document.getElementById('selectionBar'); if(bar) { bar.style.display = count > 0 ? 'flex' : 'none'; document.getElementById('selCount').innerText = count + ' item(s) selected'; } }");
+
+            html.Append("function downloadSelected() { var checks = document.querySelectorAll('.file-check:checked'); var files = []; for(var i=0; i<checks.length; i++){ if(checks[i].value) files.push(checks[i].value); } if(files.length===0) { alert('Select files to zip.'); return; } window.location = '/zip?path=" + WebUtility.UrlEncode(currentPath) + "&files=' + encodeURIComponent(files.join('|')); }");
+            html.Append("function downloadLinewise() { var checks = document.querySelectorAll('.file-check:checked'); checks.forEach(c => { var item = c.closest('.item'); var dl = item.querySelector('a[download]') || item.querySelector('a[href^=\"/zip\"]'); if(dl) dl.click(); }); }");
+            html.Append("function deleteSelected() { var checks = document.querySelectorAll('.file-check:checked'); var paths = []; for(var i=0; i<checks.length; i++){ paths.push(decodeURIComponent(checks[i].dataset.fullpath)); } if(paths.length===0) return; if(confirm('Delete ' + paths.length + ' selected items? This cannot be undone.')) { Promise.all(paths.map(p => fetch('/delete?path=' + encodeURIComponent(p), {method:'POST'}))).then(responses => { if(responses.some(r => r.status === 403)) alert('Delete Blocked: Please enable \"Allow Admin to Delete\" in your LocalStream App Settings.'); else window.location.reload(); }); } }");
+            html.Append("function deleteItem(path) { if(confirm('Are you sure you want to delete this?')) { fetch('/delete?path=' + encodeURIComponent(path), {method:'POST'}).then(res => { if(res.status === 403) alert('Delete Blocked: Please enable \"Allow Admin to Delete\" in your LocalStream App Settings.'); else window.location.reload(); }); } }"); html.Append("function handleUpload(input) { if(input.files.length === 0) return; var fd = new FormData(); for(var i=0; i<input.files.length; i++) fd.append('files', input.files[i]); fetch('/upload?path=" + WebUtility.UrlEncode(currentPath) + "', {method:'POST', body:fd}).then(() => window.location.reload()); }");
+            html.Append("function filterItems() { var input = document.getElementById('searchInput').value.toLowerCase(); document.querySelectorAll('.item:not(.up-item)').forEach(i => i.style.display = i.dataset.name.includes(input) ? '' : 'none'); }");
+            html.Append("function sortItems() { var sel = document.getElementById('sortSelect'); if(!sel) return; var val = sel.value; var c = document.getElementById('container'); var items = Array.from(document.querySelectorAll('.item:not(.up-item)')); var up = document.querySelector('.up-item'); items.sort((a,b) => { var tA=a.dataset.type, tB=b.dataset.type; if(tA!==tB) return tA==='folder'?-1:1; var nA=a.dataset.name, nB=b.dataset.name, sA=parseInt(a.dataset.size), sB=parseInt(b.dataset.size); if(val==='name-asc') return nA.localeCompare(nB); if(val==='name-desc') return nB.localeCompare(nA); if(val==='size-desc') return sB-sA; return sA-sB; }); c.innerHTML=''; if(up) c.appendChild(up); items.forEach(i=>c.appendChild(i)); }");
+            html.Append("window.onload = initSettings;");
             html.Append("</script></head><body>");
 
-            // HEADER
-            string folderName = new DirectoryInfo(currentPath).Name;
-            html.Append("<div class='header'>");
-            html.Append($"<h1>📂 {folderName}</h1>");
-            html.Append("<div style='display:flex; gap:10px'>");
-            html.Append("<input type='file' id='fileInput' multiple style='display:none' onchange='handleUpload(this)'>");
-            html.Append("<button class='btn btn-success' onclick='uploadFiles()'>⬆️ Upload</button>");
-            html.Append("<button class='btn btn-primary' onclick='downloadAll()'>📦 Zip</button>");
-            html.Append("<button class='btn btn-secondary' onclick='toggleView()'>👁 View</button>");
+            // ==========================================
+            // BREADCRUMBS NAVIGATION
+            // ==========================================
+            html.Append("<div class='breadcrumbs'>");
+            html.Append($"<a href='/'>{GetModernIcon("server")} Home</a>");
+
+            if (!isRoot)
+            {
+                string baseFolder = Config.SharedFolders.FirstOrDefault(f => currentPath.StartsWith(f, StringComparison.OrdinalIgnoreCase)) ?? "";
+                string relative = currentPath.Substring(baseFolder.Length).Trim(Path.DirectorySeparatorChar);
+
+                string buildPath = baseFolder;
+                html.Append($"<span>/</span><a href='/?path={WebUtility.UrlEncode(buildPath)}'>{new DirectoryInfo(baseFolder).Name}</a>");
+
+                if (!string.IsNullOrEmpty(relative))
+                {
+                    string[] parts = relative.Split(Path.DirectorySeparatorChar);
+                    foreach (string part in parts)
+                    {
+                        buildPath = Path.Combine(buildPath, part);
+                        html.Append($"<span>/</span><a href='/?path={WebUtility.UrlEncode(buildPath)}'>{part}</a>");
+                    }
+                }
+            }
+            html.Append("</div>");
+
+            // ==========================================
+            // TOP BAR CONTROLS
+            // ==========================================
+            html.Append("<div class='top-bar'>");
+            // Replaced <h1> with a stable Div to prevent wrapping issues completely
+            string topIcon = isRoot ? GetModernIcon("server") : GetModernIcon("folder");
+            string folderName = isRoot ? "Shared Libraries" : new DirectoryInfo(currentPath).Name;
+
+            html.Append($"<div style='display:flex; align-items:center; gap:10px; font-size:1.3rem; font-weight:bold; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;'>{topIcon} {folderName}</div>");
+
+            html.Append("<div class='controls'>");
+
+            html.Append($"<div class='input-group'>{GetModernIcon("search")}<input type='text' id='searchInput' class='search-input' placeholder='Search...' onkeyup='filterItems()'></div>");
+
+            if (!isRoot)
+            {
+                html.Append($"<button id='btnSelectMode' onclick='toggleSelectMode()' class='icon-btn' style='padding: 8px 12px; gap: 6px; font-weight: 500;' title='Select Multiple Files'>{GetModernIcon("check-square")} Select</button>");
+            }
+
+            html.Append("<select id='sortSelect' class='select-dropdown' onchange='sortItems()'><option value='name-asc'>Name (A-Z)</option><option value='name-desc'>Name (Z-A)</option><option value='size-desc'>Size (Largest)</option><option value='size-asc'>Size (Smallest)</option></select>");
+            html.Append("<div class='grid-select-wrapper'><select id='gridSizeSelect' class='select-dropdown' onchange='updateGridSize()'><option value='150'>Small Grid</option><option value='200'>Medium Grid</option><option value='280'>Large Grid</option><option value='350'>Extra Large</option></select></div>");
+
+            html.Append($"<button onclick='toggleTheme()' class='icon-btn' title='Theme'>{GetModernIcon("moon")}</button>");
+            html.Append($"<button onclick='toggleView()' class='icon-btn' title='View'>{GetModernIcon("grid")}</button>");
+
+            if (!isRoot && isAdmin)
+            {
+                html.Append("<input type='file' id='fileInput' multiple style='display:none' onchange='handleUpload(this)'>");
+                html.Append($"<button class='btn btn-success' onclick='document.getElementById(\"fileInput\").click()'>{GetModernIcon("upload")} Upload</button>");
+            }
+
             html.Append("</div></div>");
+            html.Append("<div id='container' class='container grid'>");
 
-            html.Append("<div id='container' class='container list'>");
-
-            // --- FIX: UP BUTTON (Now matches Folder layout) ---
-            string parent = Path.GetDirectoryName(currentPath);
-            bool parentIsAllowed = parent != null && Config.SharedFolders.Any(root => parent.StartsWith(root));
-            string upLink = parentIsAllowed ? $"/?path={WebUtility.UrlEncode(parent)}" : "/";
-
-            html.Append($"<div class='item' onclick=\"window.location='{upLink}'\">");
-            // Standard Structure: Preview Box + List Icon + Details
-            html.Append("<div class='preview-box'>⬆️</div>");
-            html.Append("<span class='list-only icon'>⬆️</span>");
-            html.Append("<div class='details'><div><a class='name'>..</a><span class='meta'>Go Up</span></div></div>");
-            html.Append("</div>");
-            // --------------------------------------------------
-
-            // SUB-FOLDERS
-            foreach (var dir in Directory.GetDirectories(currentPath))
+            // ==========================================
+            // RENDER FILES & FOLDERS
+            // ==========================================
+            if (isRoot)
             {
-                var info = new DirectoryInfo(dir);
-                string link = $"/?path={WebUtility.UrlEncode(dir)}";
+                foreach (var folder in Config.SharedFolders.Where(Directory.Exists))
+                {
+                    var info = new DirectoryInfo(folder);
+                    long fSize = GetDirectorySize(folder);
+                    string link = $"/?path={WebUtility.UrlEncode(folder)}";
+                    string safeName = System.Security.SecurityElement.Escape(info.Name);
 
-                html.Append($"<div class='item' onclick=\"window.location='{link}'\">");
-                html.Append("<div class='preview-box'>📁</div><span class='list-only icon'>📁</span>");
-                html.Append($"<div class='details'><div><a class='name'>{info.Name}</a><span class='meta'>Folder</span></div></div>");
-                html.Append("</div>");
+                    html.Append($"<div class='item' data-name='{safeName.ToLower()}' data-type='folder' data-size='{fSize}' data-href='{link}' onclick='handleItemClick(event, this)'>");
+                    html.Append($"<div class='preview-box'>{GetModernIcon("drive")}</div>");
+
+                    html.Append("<div class='details'>");
+                    html.Append("<div class='details-wrapper'>");
+                    html.Append($"<div style='flex-grow:1; min-width:0;'><a href='{link}' class='name'>{info.Name}</a><span class='meta'>{FormatSize(fSize)}</span></div>");
+                    html.Append("</div>");
+
+                    html.Append("<div class='actions' onclick='event.stopPropagation()'>");
+                    html.Append($"<a href='{link}' class='btn-action' title='Open Library'>{GetModernIcon("folder")}</a>");
+                    html.Append($"<a href='/zip?path={WebUtility.UrlEncode(folder)}' class='btn-action' title='Download Library as Zip'>{GetModernIcon("download")}</a>");
+                    html.Append("</div></div></div>");
+                }
+            }
+            else
+            {
+                string parent = Path.GetDirectoryName(currentPath);
+                bool parentIsAllowed = parent != null && Config.SharedFolders.Any(root => parent.StartsWith(root));
+                string upLink = parentIsAllowed ? $"/?path={WebUtility.UrlEncode(parent)}" : "/";
+
+                html.Append($"<div class='item up-item' onclick=\"window.location='{upLink}'\" style='cursor:pointer;'>");
+                html.Append($"<div class='preview-box'>{GetModernIcon("corner-up-left")}</div>");
+                html.Append("<div class='details'><div class='details-wrapper'><div><a class='name'>..</a><span class='meta'>Go Up</span></div></div></div></div>");
+
+                // FOLDERS
+                foreach (var dir in Directory.GetDirectories(currentPath))
+                {
+                    var info = new DirectoryInfo(dir);
+                    long fSize = GetDirectorySize(dir);
+                    string safeName = System.Security.SecurityElement.Escape(info.Name);
+
+                    html.Append($"<div class='item' data-name='{safeName.ToLower()}' data-type='folder' data-size='{fSize}' data-href='/?path={WebUtility.UrlEncode(dir)}' onclick='handleItemClick(event, this)'>");
+                    html.Append($"<div class='preview-box'>{GetModernIcon("folder")}</div>");
+
+                    html.Append("<div class='details'>");
+                    html.Append("<div class='details-wrapper'>");
+                    html.Append($"<input type='checkbox' class='checkbox file-check' value='' data-fullpath='{WebUtility.UrlEncode(dir)}' onclick='handleCheckClick(event, this)'>");
+                    html.Append($"<div style='flex-grow:1; min-width:0;'><a href='/?path={WebUtility.UrlEncode(dir)}' class='name'>{safeName}</a><span class='meta'>{FormatSize(fSize)}</span></div>");
+                    html.Append("</div>");
+
+                    html.Append("<div class='actions' onclick='event.stopPropagation()'>");
+                    html.Append($"<a href='/?path={WebUtility.UrlEncode(dir)}' class='btn-action' title='Open Folder'>{GetModernIcon("folder")}</a>");
+                    html.Append($"<a href='/zip?path={WebUtility.UrlEncode(dir)}' class='btn-action' title='Download Folder as Zip'>{GetModernIcon("download")}</a>");
+                    if (isAdmin)
+                    {
+                        string safeDirJs = dir.Replace("\\", "\\\\"); // Fixes the JS backslash crash
+                        html.Append($"<button onclick=\"deleteItem('{System.Security.SecurityElement.Escape(safeDirJs)}')\" class='btn-action btn-danger-action' title='Delete Folder'>{GetModernIcon("trash")}</button>");
+                    }
+                    html.Append("</div></div></div>");
+                }
+
+                // FILES
+                foreach (var file in Directory.GetFiles(currentPath))
+                {
+                    var info = new FileInfo(file);
+                    string fullPathB64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(file));
+                    string url = $"/file/{fullPathB64}";
+                    string thumbUrl = $"/thumb/{fullPathB64}";
+                    string safeName = System.Security.SecurityElement.Escape(info.Name);
+                    bool isMedia = IsMediaFile(info.Name);
+
+                    html.Append($"<div class='item' data-name='{safeName.ToLower()}' data-type='file' data-size='{info.Length}' data-href='{url}' onclick='handleItemClick(event, this)'>");
+
+                    html.Append("<div class='preview-box'>");
+                    html.Append(GetModernFileIcon(info.Extension));
+                    if (isMedia)
+                    {
+                        html.Append($"<img src='{thumbUrl}' class='preview-img' loading='lazy' onerror=\"this.style.display='none'\"/>");
+                    }
+                    html.Append("</div>");
+
+                    html.Append("<div class='details'>");
+                    html.Append("<div class='details-wrapper'>");
+                    html.Append($"<input type='checkbox' class='checkbox file-check' value='{WebUtility.UrlEncode(info.Name)}' data-fullpath='{WebUtility.UrlEncode(file)}' onclick='handleCheckClick(event, this)'>");
+                    html.Append($"<div style='flex-grow:1; min-width:0;'><a href='{url}' target='_blank' class='name'>{safeName}</a><span class='meta'>{FormatSize(info.Length)}</span></div>");
+                    html.Append("</div>");
+
+                    html.Append("<div class='actions' onclick='event.stopPropagation()'>");
+                    html.Append($"<a href='{url}' target='_blank' class='btn-action' title='Play / View'>{GetModernIcon("play")}</a>");
+                    html.Append($"<a href='{url}' download class='btn-action' title='Download'>{GetModernIcon("download")}</a>");
+                    if (isAdmin)
+                    {
+                        string safeFileJs = file.Replace("\\", "\\\\"); // Fixes the JS backslash crash
+                        html.Append($"<button onclick=\"deleteItem('{System.Security.SecurityElement.Escape(safeFileJs)}')\" class='btn-action btn-danger-action' title='Delete'>{GetModernIcon("trash")}</button>");
+                    }
+                    html.Append("</div></div></div>");
+                }
+
+                // BOTTOM SELECTION BAR
+                html.Append("</div>"); // End container
+
+                // Ensure Selection Bar is OUTSIDE the grid container, appended at the end of the body
+                html.Append("<div id='selectionBar' class='selection-bar'>");
+                html.Append("<span id='selCount' style='font-weight:600;'>0 selected</span>");
+
+                html.Append("<div style='display: flex; gap: 10px; flex-wrap: wrap;'>");
+                html.Append($"<button class='btn btn-secondary' onclick='downloadLinewise()'>{GetModernIcon("download")} Download 1-by-1</button>");
+                html.Append($"<button class='btn btn-primary' onclick='downloadSelected()'>{GetModernIcon("download")} Zip Selected Files</button>");
+                if (isAdmin)
+                {
+                    html.Append($"<button class='btn btn-danger' onclick='deleteSelected()'>{GetModernIcon("trash")} Delete Selected</button>");
+                }
+                html.Append("</div></div>");
             }
 
-            // FILES
-            foreach (var file in Directory.GetFiles(currentPath))
-            {
-                var info = new FileInfo(file);
-                string fullPathB64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(file));
-                string url = $"/file/{fullPathB64}";
-                string thumbUrl = $"/thumb/{fullPathB64}";
-                string icon = GetFileIcon(info.Extension);
-                bool isMedia = IsMediaFile(info.Name);
-                string bgStyle = isMedia ? $"style=\"background-image: url('{thumbUrl}');\"" : "";
-
-                html.Append("<div class='item'>");
-                html.Append($"<input type='checkbox' class='checkbox file-check' value='{WebUtility.UrlEncode(info.Name)}' onclick='event.stopPropagation(); updateSelection()'>");
-                html.Append($"<div class='preview-box' {bgStyle}>{(!isMedia ? icon : "")}</div>");
-                html.Append($"<span class='list-only icon'>{icon}</span>");
-                html.Append("<div class='details'>");
-                html.Append($"<div style='flex-grow:1; min-width:0;'><a href='{url}' target='_blank' class='name'>{info.Name}</a><span class='meta'>{FormatSize(info.Length)}</span></div>");
-                html.Append("<div class='actions'>");
-                html.Append($"<a href='{url}' target='_blank' class='btn btn-primary btn-action'>▶</a>");
-                html.Append($"<a href='{url}' download class='btn btn-secondary btn-action'>⬇</a>");
-                html.Append("</div></div></div>");
-            }
-
-            html.Append("</div>"); // End Container
-
-            // Selection Bar
-            html.Append("<div id='selectionBar' style='position:fixed; bottom:0; left:0; right:0; background:#333; color:white; padding:15px; display:none; justify-content:space-between; align-items:center; box-shadow:0 -2px 10px rgba(0,0,0,0.2);'>");
-            html.Append("<span id='selCount' style='font-weight:bold'>0 selected</span>");
-            html.Append("<button class='btn btn-success' onclick='downloadSelected()'>📦 Download Selected</button>");
-            html.Append("</div>");
+            if (isRoot) html.Append("</div>"); // Close root grid container
 
             html.Append("</body></html>");
 
@@ -994,6 +2256,50 @@ namespace LocalStreamPC
             context.Response.ContentLength64 = buffer.Length;
             context.Response.OutputStream.Write(buffer, 0, buffer.Length);
             context.Response.Close();
+        }
+
+
+        private string GetModernFileIcon(string extension)
+        {
+            string ext = extension.ToLower();
+
+            if (new[] { ".mp4", ".mkv", ".avi", ".mov", ".webm", ".wmv" }.Contains(ext))
+                return "<svg width='24' height='24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' viewBox='0 0 24 24'><rect x='2' y='2' width='20' height='20' rx='2.18' ry='2.18'></rect><line x1='7' y1='2' x2='7' y2='22'></line><line x1='17' y1='2' x2='17' y2='22'></line><line x1='2' y1='12' x2='22' y2='12'></line><line x1='2' y1='7' x2='7' y2='7'></line><line x1='2' y1='17' x2='7' y2='17'></line><line x1='17' y1='17' x2='22' y2='17'></line><line x1='17' y1='7' x2='22' y2='7'></line></svg>";
+
+            if (new[] { ".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac" }.Contains(ext))
+                return "<svg width='24' height='24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' viewBox='0 0 24 24'><path d='M9 18V5l12-2v13'></path><circle cx='6' cy='18' r='3'></circle><circle cx='18' cy='16' r='3'></circle></svg>";
+
+            if (new[] { ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp" }.Contains(ext))
+                return "<svg width='24' height='24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' viewBox='0 0 24 24'><rect x='3' y='3' width='18' height='18' rx='2' ry='2'></rect><circle cx='8.5' cy='8.5' r='1.5'></circle><polyline points='21 15 16 10 5 21'></polyline></svg>";
+
+            if (new[] { ".zip", ".rar", ".7z", ".tar", ".gz" }.Contains(ext))
+                return "<svg width='24' height='24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' viewBox='0 0 24 24'><path d='M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z'></path><polyline points='3.27 6.96 12 12.01 20.73 6.96'></polyline><line x1='12' y1='22.08' x2='12' y2='12'></line></svg>";
+
+            if (new[] { ".pdf", ".doc", ".docx", ".txt", ".xlsx" }.Contains(ext))
+                return "<svg width='24' height='24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' viewBox='0 0 24 24'><path d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z'></path><polyline points='14 2 14 8 20 8'></polyline><line x1='16' y1='13' x2='8' y2='13'></line><line x1='16' y1='17' x2='8' y2='17'></line><polyline points='10 9 9 9 8 9'></polyline></svg>";
+
+            return "<svg width='24' height='24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' viewBox='0 0 24 24'><path d='M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z'></path><polyline points='13 2 13 9 20 9'></polyline></svg>";
+        }
+
+        private string GetModernIcon(string name)
+        {
+            return name switch
+            {
+                "folder" => "<svg width='24' height='24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' viewBox='0 0 24 24'><path d='M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z'></path></svg>",
+                "corner-up-left" => "<svg width='24' height='24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' viewBox='0 0 24 24'><polyline points='9 14 4 9 9 4'></polyline><path d='M20 20v-7a4 4 0 0 0-4-4H4'></path></svg>",
+                "search" => "<svg width='24' height='24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' viewBox='0 0 24 24'><circle cx='11' cy='11' r='8'></circle><line x1='21' y1='21' x2='16.65' y2='16.65'></line></svg>",
+                "upload" => "<svg width='24' height='24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' viewBox='0 0 24 24'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'></path><polyline points='17 8 12 3 7 8'></polyline><line x1='12' y1='3' x2='12' y2='15'></line></svg>",
+                "download" => "<svg width='24' height='24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' viewBox='0 0 24 24'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'></path><polyline points='7 10 12 15 17 10'></polyline><line x1='12' y1='15' x2='12' y2='3'></line></svg>",
+                "grid" => "<svg width='24' height='24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' viewBox='0 0 24 24'><rect x='3' y='3' width='7' height='7'></rect><rect x='14' y='3' width='7' height='7'></rect><rect x='14' y='14' width='7' height='7'></rect><rect x='3' y='14' width='7' height='7'></rect></svg>",
+                "play" => "<svg width='24' height='24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' viewBox='0 0 24 24'><circle cx='12' cy='12' r='10'></circle><polygon points='10 8 16 12 10 16 10 8'></polygon></svg>",
+                "server" => "<svg width='24' height='24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' viewBox='0 0 24 24'><rect x='2' y='2' width='20' height='8' rx='2' ry='2'></rect><rect x='2' y='14' width='20' height='8' rx='2' ry='2'></rect><line x1='6' y1='6' x2='6.01' y2='6'></line><line x1='6' y1='18' x2='6.01' y2='18'></line></svg>",
+                "drive" => "<svg width='24' height='24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' viewBox='0 0 24 24'><rect x='2' y='7' width='20' height='14' rx='2' ry='2'></rect><path d='M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16'></path></svg>",
+                "moon" => "<svg width='24' height='24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' viewBox='0 0 24 24'><path d='M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z'></path></svg>",
+                "image" => "<svg width='24' height='24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' viewBox='0 0 24 24'><rect x='3' y='3' width='18' height='18' rx='2' ry='2'></rect><circle cx='8.5' cy='8.5' r='1.5'></circle><polyline points='21 15 16 10 5 21'></polyline></svg>",
+                "check-square" => "<svg width='24' height='24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' viewBox='0 0 24 24'><polyline points='9 11 12 14 22 4'></polyline><path d='M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11'></path></svg>",
+                "trash" => "<svg width='24' height='24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' viewBox='0 0 24 24'><polyline points='3 6 5 6 21 6'></polyline><path d='M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2'></path></svg>",
+                _ => ""
+            };
         }
         // ================= UPLOAD HANDLER ================= //
 
@@ -1007,7 +2313,7 @@ namespace LocalStreamPC
                 // 2. Security: Validate Path
                 if (string.IsNullOrEmpty(pathParam) || pathParam.Contains(".."))
                 {
-                    Log("⚠️ Upload blocked: Invalid path.");
+                    Log(" Upload blocked: Invalid path.");
                     context.Response.StatusCode = 400;
                     context.Response.Close();
                     return;
@@ -1019,7 +2325,7 @@ namespace LocalStreamPC
 
                 if (!isAllowed)
                 {
-                    Log($"⚠️ Upload blocked: '{pathParam}' is not a shared folder.");
+                    Log($" Upload blocked: '{pathParam}' is not a shared folder.");
                     context.Response.StatusCode = 403; // Forbidden
                     context.Response.Close();
                     return;
@@ -1051,7 +2357,7 @@ namespace LocalStreamPC
                         context.Request.InputStream.CopyTo(ms);
                         byte[] data = ms.ToArray();
 
-                        Log($"📥 Upload received ({FormatSize(data.Length)}). Processing...");
+                        Log($" Upload received ({FormatSize(data.Length)}). Processing...");
 
                         // Find Filename
                         // We peek at the first 2KB of headers to find the name
@@ -1092,7 +2398,7 @@ namespace LocalStreamPC
                                 if (length > 0)
                                 {
                                     fs.Write(data, contentStart, length);
-                                    Log($"✅ Saved: {filename}");
+                                    Log($" Saved: {filename}");
                                 }
                             }
                         }
@@ -1106,7 +2412,7 @@ namespace LocalStreamPC
             }
             catch (Exception ex)
             {
-                Log($"🔥 Upload Error: {ex.Message}");
+                Log($" Upload Error: {ex.Message}");
                 context.Response.StatusCode = 500;
             }
             finally
@@ -1233,7 +2539,7 @@ namespace LocalStreamPC
                 catch { }
             }
             context.Response.Close();
-            Log($"▶️ Served: {fileInfo.Name}");
+            Log($" Served: {fileInfo.Name}");
         }
 
         private bool IsMediaFile(string filename)
@@ -1318,7 +2624,7 @@ namespace LocalStreamPC
                 }
 
                 bool isRecursive = requestBody.Contains("BrowseRecursive");
-                Log($"📂 Browse: ID '{objectId}'");
+                Log($" Browse: ID '{objectId}'");
 
                 StringBuilder didl = new StringBuilder();
                 didl.Append("&lt;DIDL-Lite xmlns=&quot;urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/&quot; xmlns:dc=&quot;http://purl.org/dc/elements/1.1/&quot; xmlns:upnp=&quot;urn:schemas-upnp-org:metadata-1-0/upnp/&quot; xmlns:dlna=&quot;urn:schemas-dlna-org:metadata-1-0/&quot;&gt;");
@@ -1410,7 +2716,7 @@ namespace LocalStreamPC
             }
             catch (Exception ex)
             {
-                Log($"🔥 BROWSE ERROR: {ex.Message}");
+                Log($" BROWSE ERROR: {ex.Message}");
                 context.Response.StatusCode = 500;
                 context.Response.Close();
             }
@@ -1509,10 +2815,7 @@ namespace LocalStreamPC
             {
                 using (var client = new UdpClient())
                 {
-                    // LINUX FIX: Bind to 0.0.0.0 (Any) instead of specific IP
-                    // This allows Linux to pick up multicast packets from all interfaces
                     var localEp = new IPEndPoint(IPAddress.Any, 1900);
-
                     client.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
                     client.ExclusiveAddressUse = false;
 
@@ -1520,50 +2823,50 @@ namespace LocalStreamPC
                     {
                         client.Client.Bind(localEp);
 
-                        // JOIN the group specifying the interface IP
-                        client.JoinMulticastGroup(IPAddress.Parse("239.255.255.250"), IPAddress.Parse(_localIp));
+                        // CRITICAL FIX: Join the multicast group on EVERY active network adapter
+                        foreach (var item in _localIps)
+                        {
+                            try { client.JoinMulticastGroup(IPAddress.Parse("239.255.255.250"), IPAddress.Parse(item.Ip)); }
+                            catch { }
+                        }
 
-                        Log("📡 SSDP Active (Upnp Server Enabled)");
+                        Log("SSDP Active (Broadcasting on LAN & Wi-Fi)");
                     }
                     catch (Exception bindEx)
                     {
-                        Log($"⚠️ SSDP Bind Error: {bindEx.Message}");
+                        Log($"SSDP Bind Error: {bindEx.Message}");
                         return;
                     }
 
-                    // ... (Rest of the Receive Loop is the same) ...
                     while (!token.IsCancellationRequested)
                     {
-                        // Paste the existing loop here
-                        try
-                        {
-                            var result = await client.ReceiveAsync(token);
-                            string msg = Encoding.UTF8.GetString(result.Buffer);
+                        var result = await client.ReceiveAsync();
+                        string request = Encoding.UTF8.GetString(result.Buffer);
 
-                            if (msg.Contains("M-SEARCH") && (msg.Contains("MediaServer") || msg.Contains("ssdp:all") || msg.Contains("upnp:rootdevice")))
+                        if (request.StartsWith("M-SEARCH"))
+                        {
+                            // Multi-Homed Reply: Send a distinct UPnP reply for EVERY active IP address. 
+                            // The receiving device (TV, Phone) will automatically connect to the IP that matches its subnet!
+                            foreach (var item in _localIps)
                             {
-                                // ... (Response logic remains the same) ...
                                 string response = $"HTTP/1.1 200 OK\r\n" +
                                                   $"CACHE-CONTROL: max-age=1800\r\n" +
-                                                  $"DATE: {DateTime.Now:r}\r\n" +
                                                   $"EXT:\r\n" +
-                                                  $"LOCATION: http://{_localIp}:{PORT}/description.xml\r\n" +
-                                                  $"SERVER: Linux UPnP/1.0\r\n" +
+                                                 $"LOCATION: http://{item.Ip}:{Config.Port}/description.xml\r\n" +
+                                                  $"SERVER: Windows UPnP/1.1 LocalStream/1.1\r\n" +
                                                   $"ST: urn:schemas-upnp-org:device:MediaServer:1\r\n" +
-                                                  $"USN: {UDN}::urn:schemas-upnp-org:device:MediaServer:1\r\n\r\n";
+                                                  $"USN: uuid:{_serverUuid}::urn:schemas-upnp-org:device:MediaServer:1\r\n\r\n";
 
-                                byte[] bytes = Encoding.UTF8.GetBytes(response);
-                                await client.SendAsync(bytes, bytes.Length, result.RemoteEndPoint);
+                                byte[] data = Encoding.UTF8.GetBytes(response);
+                                await client.SendAsync(data, data.Length, result.RemoteEndPoint);
                             }
                         }
-                        catch (OperationCanceledException) { break; }
-                        catch { }
                     }
                 }
             }
             catch (Exception ex)
             {
-                Log($"❌ SSDP Critical Fail: {ex.Message}");
+                Log($"SSDP Fail: {ex.Message}");
             }
         }
 
@@ -1598,7 +2901,7 @@ namespace LocalStreamPC
                 }
                 catch (SocketException ex)
                 {
-                    Log($"⚠️ Discovery Network Error: {ex.Message}. Check firewall.");
+                    Log($" Discovery Network Error: {ex.Message}. Check firewall.");
                     return;
                 }
 
@@ -1711,4 +3014,133 @@ namespace LocalStreamPC
         public string ContentDirectoryUrl { get; set; }
         public string BaseUrl { get; set; }
     }
+
+
+    public class RemoteItem : INotifyPropertyChanged
+    {
+        public string Id { get; set; }
+        public string Title { get; set; }
+        public bool IsFolder { get; set; }
+        public string Url { get; set; }
+        public string TypeIcon { get; set; }
+        public string Details { get; set; }
+        public string ThumbnailUrl { get; set; }
+
+        public long Size { get; set; }
+
+
+
+        private double _watchProgress = 0;
+        public double WatchProgress
+        {
+            get => _watchProgress;
+            set { _watchProgress = value; OnPropertyChanged(); OnPropertyChanged(nameof(HasProgress)); }
+        }
+        public bool HasProgress => _watchProgress > 0;
+
+        private Avalonia.Media.Imaging.Bitmap? _thumbnailBitmap;
+        public Avalonia.Media.Imaging.Bitmap? ThumbnailBitmap
+        {
+            get => _thumbnailBitmap;
+            set
+            {
+                _thumbnailBitmap = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(IsIconVisible));
+                OnPropertyChanged(nameof(IsImageVisible));
+            }
+        }
+        public bool IsIconVisible => _thumbnailBitmap == null;
+        public bool IsImageVisible => _thumbnailBitmap != null;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        public async Task LoadThumbnailAsync()
+        {
+            if (string.IsNullOrEmpty(ThumbnailUrl)) return;
+
+            try
+            {
+                using (var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) })
+                {
+                    var response = await client.GetAsync(ThumbnailUrl);
+                    if (response.IsSuccessStatusCode)
+                    {
+                        var data = await response.Content.ReadAsByteArrayAsync();
+
+                        // CRITICAL FIX: Decode the image safely on the UI thread 
+                        // so the MemoryStream doesn't dispose too early.
+                        await Dispatcher.UIThread.InvokeAsync(() =>
+                        {
+                            using (var stream = new MemoryStream(data))
+                            {
+                                // DecodeToWidth saves a massive amount of RAM!
+                                ThumbnailBitmap = Avalonia.Media.Imaging.Bitmap.DecodeToWidth(stream, 200);
+                            }
+                        });
+                    }
+                }
+            }
+            catch
+            {
+                // Silently fail and keep the default SVG icon if the image is broken/unreachable
+            }
+        }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+        protected void OnPropertyChanged([CallerMemberName] string? name = null)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+        }
+    }
+
+
+    public class ServerUrlItem
+    {
+        public string NetworkName { get; set; }
+        public string Url { get; set; }
+    }
+
+    public static class Icons
+    {
+        public const string Folder = "M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z";
+        public const string Video = "M23 7l-7 5 7 5V7z M1 5h14v14H1z"; // Video Camera
+        public const string Audio = "M9 18V5l12-2v13 M6 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0zm12-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0z"; // Music Note
+        public const string Image = "M21 19V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2z M8.5 8.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z M21 15l-5-5L5 21"; // Picture
+        public const string File = "M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z M13 2v7h7"; // Document
+    }
+
+
+    public class BreadcrumbItem : INotifyPropertyChanged
+    {
+        public string Id { get; set; }
+        public string Title { get; set; }
+        public bool IsNotFirst { get; set; }
+        public string FontWeight => IsLast ? "Bold" : "Normal";
+
+        private bool _isLast;
+        public bool IsLast
+        {
+            get => _isLast;
+            set { _isLast = value; OnPropertyChanged(); OnPropertyChanged(nameof(FontWeight)); }
+        }
+
+        public event PropertyChangedEventHandler PropertyChanged;
+        protected void OnPropertyChanged([CallerMemberName] string name = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+    }
+
+
+
+
 }

@@ -3,11 +3,13 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="using:LocalStreamPC"
-        mc:Ignorable="d" d:DesignWidth="950" d:DesignHeight="650"
+        x:DataType="local:MainWindow"
+        mc:Ignorable="d" d:DesignWidth="950" d:DesignHeight="750"
         x:Class="LocalStreamPC.MainWindow"
+        x:Name="RootWindow"
         Title="LocalStream Server"
         Icon="/Assets/app-icon.ico"
-        Width="950" Height="650"
+        Width="950" Height="750"
         WindowStartupLocation="CenterScreen"
         Background="{DynamicResource PageBackground}"
         RequestedThemeVariant="Dark"
@@ -23,21 +25,31 @@
 					<SolidColorBrush x:Key="TextSecondary">#6B7280</SolidColorBrush>
 					<SolidColorBrush x:Key="BorderBrush">#E5E7EB</SolidColorBrush>
 					<SolidColorBrush x:Key="IconBg">#EEF2FF</SolidColorBrush>
+					<SolidColorBrush x:Key="ProgressBarBg">#E5E7EB</SolidColorBrush>
 				</ResourceDictionary>
 
 				<ResourceDictionary x:Key="Dark">
-					<SolidColorBrush x:Key="PageBackground">#030712</SolidColorBrush>
-					<SolidColorBrush x:Key="CardBackground">#1F2937</SolidColorBrush>
+					<SolidColorBrush x:Key="PageBackground">#0F1115</SolidColorBrush>
+					<SolidColorBrush x:Key="CardBackground">#1A1D24</SolidColorBrush>
 					<SolidColorBrush x:Key="TextPrimary">#F9FAFB</SolidColorBrush>
 					<SolidColorBrush x:Key="TextSecondary">#9CA3AF</SolidColorBrush>
-					<SolidColorBrush x:Key="BorderBrush">#374151</SolidColorBrush>
-					<SolidColorBrush x:Key="IconBg">#374151</SolidColorBrush>
+					<SolidColorBrush x:Key="BorderBrush">#2A2F3A</SolidColorBrush>
+					<SolidColorBrush x:Key="IconBg">#2A2F3A</SolidColorBrush>
+					<SolidColorBrush x:Key="ProgressBarBg">#374151</SolidColorBrush>
 				</ResourceDictionary>
 			</ResourceDictionary.ThemeDictionaries>
 		</ResourceDictionary>
 	</Window.Resources>
 
 	<Window.Styles>
+		<Style Selector="Path.icon">
+			<Setter Property="StrokeThickness" Value="2"/>
+			<Setter Property="StrokeLineCap" Value="Round"/>
+			<Setter Property="StrokeJoin" Value="Round"/>
+			<Setter Property="Fill" Value="Transparent"/>
+			<Setter Property="Stretch" Value="Uniform"/>
+		</Style>
+
 		<Style Selector="Button">
 			<Setter Property="CornerRadius" Value="6"/>
 			<Setter Property="Padding" Value="16,10"/>
@@ -59,28 +71,30 @@
 		<Style Selector="RadioButton.nav">
 			<Setter Property="Background" Value="Transparent"/>
 			<Setter Property="Foreground" Value="#9CA3AF"/>
-			<Setter Property="Padding" Value="25,18"/>
-			<Setter Property="Margin" Value="15,8"/>
-			<Setter Property="CornerRadius" Value="12"/>
-			<Setter Property="FontSize" Value="16"/>
+			<Setter Property="Width" Value="50"/>
+			<Setter Property="Height" Value="50"/>
+			<Setter Property="Margin" Value="0,8"/>
+			<Setter Property="CornerRadius" Value="14"/>
 			<Setter Property="Cursor" Value="Hand"/>
+			<Setter Property="ToolTip.Placement" Value="Right"/>
+			<Setter Property="ToolTip.VerticalOffset" Value="0"/>
+			<Setter Property="ToolTip.HorizontalOffset" Value="15"/>
 			<Setter Property="Template">
 				<ControlTemplate>
-					<Border Background="{TemplateBinding Background}" CornerRadius="12" Padding="{TemplateBinding Padding}">
-						<ContentPresenter Content="{TemplateBinding Content}" HorizontalAlignment="Left"/>
+					<Border Background="{TemplateBinding Background}" CornerRadius="{TemplateBinding CornerRadius}">
+						<ContentPresenter Content="{TemplateBinding Content}" 
+										  HorizontalAlignment="Center" 
+										  VerticalAlignment="Center"/>
 					</Border>
 				</ControlTemplate>
 			</Setter>
 		</Style>
-
 		<Style Selector="RadioButton.nav:pointerover">
 			<Setter Property="Background" Value="#1F2937"/>
 			<Setter Property="Foreground" Value="White"/>
 		</Style>
-
 		<Style Selector="RadioButton.nav:checked">
 			<Setter Property="Foreground" Value="White"/>
-			<Setter Property="FontWeight" Value="Bold"/>
 		</Style>
 		<Style Selector="RadioButton.nav:checked /template/ Border">
 			<Setter Property="Background" Value="#3B82F6"/>
@@ -89,9 +103,8 @@
 
 		<Style Selector="Border.card">
 			<Setter Property="Background" Value="{DynamicResource CardBackground}"/>
-			<Setter Property="CornerRadius" Value="16"/>
+			<Setter Property="CornerRadius" Value="12"/>
 			<Setter Property="BoxShadow" Value="0 4 20 0 #15000000"/>
-			<Setter Property="Margin" Value="0,0,0,20"/>
 			<Setter Property="Transitions">
 				<Transitions>
 					<BrushTransition Property="Background" Duration="0:0:0.2"/>
@@ -99,46 +112,77 @@
 			</Setter>
 		</Style>
 
-		<Style Selector="TextBox">
+		<Style Selector="TextBox, ComboBox">
 			<Setter Property="CornerRadius" Value="8"/>
 			<Setter Property="Height" Value="42"/>
-			<Setter Property="VerticalContentAlignment" Value="Center"/>
 			<Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
 		</Style>
-
+		<Style Selector="TextBox">
+			<Setter Property="VerticalContentAlignment" Value="Center"/>
+		</Style>
+		<Style Selector="ComboBox">
+			<Setter Property="VerticalAlignment" Value="Center"/>
+		</Style>
+		
+			
 		<Style Selector="ListBoxItem">
-			<Setter Property="Padding" Value="8,4"/>
+			<Setter Property="Padding" Value="0"/>
 			<Setter Property="MinHeight" Value="0"/>
-			<Setter Property="CornerRadius" Value="8"/>
-			<Setter Property="Margin" Value="0,4"/>
+			<Setter Property="CornerRadius" Value="12"/>
+			<Setter Property="Margin" Value="6"/>
+			<Setter Property="Background" Value="Transparent"/>
+		</Style>
+		
+		<Style Selector="ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+			<Setter Property="Background" Value="Transparent"/>
+		</Style>
+		<Style Selector="ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+			<Setter Property="Background" Value="Transparent"/>
+		</Style>
+		<Style Selector="ListBoxItem:selected:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+			<Setter Property="Background" Value="Transparent"/>
+		</Style>
+		<Style Selector="ListBoxItem:pressed /template/ ContentPresenter#PART_ContentPresenter">
+			<Setter Property="Background" Value="Transparent"/>
 		</Style>
 	</Window.Styles>
 
-	<Grid ColumnDefinitions="260, *">
+	<Grid ColumnDefinitions="70, *">
 
-		<Border Grid.Column="0" Background="#111827">
+		<Border Grid.Column="0" Background="#0B0D11" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,1,0">
 			<Grid RowDefinitions="Auto, *, Auto">
-
-				<StackPanel Margin="30,50,30,0">
-					<StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center">
-						<TextBlock Text="📡" FontSize="28"/>
-						<TextBlock Text="LocalStream" Foreground="White" FontSize="24" FontWeight="Bold" VerticalAlignment="Center"/>
-					</StackPanel>
-					<TextBlock Text="MEDIA SERVER" Foreground="#6B7280" FontSize="11" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,10,0,0" LetterSpacing="2"/>
+				
+				<StackPanel Margin="0,30,0,0" HorizontalAlignment="Center">
+					<Image Source="/Assets/app-icon.ico" Width="36" Height="36" ToolTip.Tip="LocalStream Server" ToolTip.Placement="Right"/>
 				</StackPanel>
 
-				<StackPanel Grid.Row="1" Spacing="5" VerticalAlignment="Center">
-					<RadioButton Classes="nav" Content="📊  Dashboard" Tag="TabServer" Click="Nav_Click" IsChecked="True"/>
-					<RadioButton Classes="nav" Content="🔎  Scanner" Tag="TabScanner" Click="Nav_Click"/>
-					<RadioButton Classes="nav" Content="⚙️  Settings" Tag="TabSettings" Click="Nav_Click"/>
+				<StackPanel Grid.Row="1" VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8">
+					<RadioButton Classes="nav" ToolTip.Tip="Home (Dashboard)" Tag="TabServer" Click="Nav_Click" IsChecked="True">
+						<Path Classes="icon" Data="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z M9 22V12h6v10" Width="24" Height="24" Stroke="{Binding $parent[RadioButton].Foreground}" x:CompileBindings="False"/>
+					</RadioButton>
+					
+					<RadioButton Classes="nav" ToolTip.Tip="Servers" Tag="TabServers" Click="Nav_Click">
+						<Path Classes="icon" Data="M2 6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6z M2 16a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-4z M6 8h.01 M6 18h.01" Width="24" Height="24" Stroke="{Binding $parent[RadioButton].Foreground}" x:CompileBindings="False"/>
+					</RadioButton>
+					
+					<RadioButton Classes="nav" ToolTip.Tip="Settings" Tag="TabSettings" Click="Nav_Click">
+						<Path Classes="icon" Data="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1Z" Width="24" Height="24" Stroke="{Binding $parent[RadioButton].Foreground}" x:CompileBindings="False"/>
+					</RadioButton>
 				</StackPanel>
-
-				<StackPanel Grid.Row="2" Margin="30" Spacing="15">
-					<Button Name="BtnToggleTheme" Click="BtnToggleTheme_Click"
-                            Content="🌙 Dark Mode"
-                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
-                            Background="#374151" Foreground="White" BorderThickness="0"/>
-					<TextBlock Text="v1.0.0" Foreground="#4B5563" HorizontalAlignment="Center" FontSize="12"/>
+				<StackPanel Grid.Row="2" Margin="0,0,0,20" Spacing="15" HorizontalAlignment="Center">
+					<Button Name="BtnToggleTheme" Click="BtnToggleTheme_Click" ToolTip.Tip="Switch Theme" ToolTip.Placement="Right"
+							Width="44" Height="44" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+							Background="#2A2F3A" Foreground="White" BorderThickness="0" CornerRadius="12" Padding="0">
+						<Path Name="ThemeIconPath" Classes="icon" Data="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" Width="20" Height="20" Stroke="White"/>
+					</Button>
+					
+					<Button Name="BtnCheckUpdate" Click="BtnCheckUpdate_Click" ToolTip.Tip="Check for Updates" ToolTip.Placement="Right"
+							Width="44" Height="44" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+							Background="#2A2F3A" Foreground="White" BorderThickness="0" CornerRadius="12" Padding="0">
+						<Path Name="UpdateIconPath" Classes="icon" Data="M21 2v6h-6 M3 12a9 9 0 0 1 15-6.7L21 8 M3 22v-6h6 M21 12a9 9 0 0 1-15 6.7L3 16" Width="20" Height="20" Stroke="White"/>
+					</Button>
+					
+					<TextBlock Text="v1.1" Foreground="#4B5563" HorizontalAlignment="Center" FontSize="10" FontWeight="Bold"/>
 				</StackPanel>
 			</Grid>
 		</Border>
@@ -148,90 +192,321 @@
 			<Grid Name="TabServer" RowDefinitions="Auto, *" IsVisible="True">
 				<ScrollViewer Grid.Row="1" AllowAutoHide="False">
 					<StackPanel Spacing="25" Margin="0,0,15,0">
+						
 						<Border Classes="card" Padding="0">
-							<Grid RowDefinitions="Auto, *, Auto, Auto">
-
-								<Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1" Padding="25">
-									<StackPanel Orientation="Horizontal" Spacing="15">
-										<Border Background="{DynamicResource IconBg}" CornerRadius="10" Padding="10">
-											<TextBlock Text="📁" FontSize="24"/>
-										</Border>
-										<StackPanel VerticalAlignment="Center">
-											<TextBlock Text="Shared Libraries" FontSize="18" FontWeight="Bold" Foreground="{DynamicResource TextPrimary}"/>
-											<TextBlock Text="Manage folders and server status" FontSize="13" Foreground="{DynamicResource TextSecondary}"/>
-										</StackPanel>
-									</StackPanel>
-								</Border>
-
-								<ListBox Name="ListSharedFolders" Grid.Row="1" Height="160" Background="Transparent" BorderThickness="0" Margin="15">
+							<Grid RowDefinitions="*, Auto">
+								<ListBox Name="ListSharedFolders" Grid.Row="0" Height="160" Background="Transparent" BorderThickness="0" Margin="15">
 									<ListBox.ItemTemplate>
 										<DataTemplate>
 											<Grid ColumnDefinitions="Auto, *">
 												<Border Grid.Column="0" Background="{DynamicResource PageBackground}" CornerRadius="4" Padding="6" Margin="0,0,10,0">
-													<TextBlock Text="📂" FontSize="12" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+													<Path Classes="icon" Data="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" Width="16" Height="16" Stroke="{DynamicResource TextSecondary}" HorizontalAlignment="Center"/>
 												</Border>
-												<TextBlock Grid.Column="1" Text="{Binding}" VerticalAlignment="Center" FontWeight="Normal"
-                                                           Foreground="{DynamicResource TextPrimary}" FontSize="12" TextTrimming="CharacterEllipsis"/>
+												<TextBlock Grid.Column="1" Text="{Binding}" VerticalAlignment="Center" Foreground="{DynamicResource TextPrimary}" FontSize="12" TextTrimming="CharacterEllipsis"/>
 											</Grid>
 										</DataTemplate>
 									</ListBox.ItemTemplate>
 								</ListBox>
 
-								<Border Grid.Row="2" Background="{DynamicResource PageBackground}" Padding="15,10" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,1,0,0">
+								<Border Grid.Row="1" Background="Transparent" Padding="20,15" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,1,0,0">
 									<Grid ColumnDefinitions="*, Auto">
 										<TextBlock Text="Select folders to stream over UPnP" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" FontSize="12" Margin="10,0"/>
 										<StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10">
-											<Button Name="BtnRemoveFolder" Click="BtnRemoveFolder_Click" Content="Remove"
-                                                    Background="Transparent" Foreground="#EF4444" BorderBrush="#EF4444" BorderThickness="1"/>
-											<Button Name="BtnAddFolder" Click="BtnAddFolder_Click" Content="+ Add Folder"
-                                                    Background="Transparent" Foreground="#3B82F6" BorderBrush="#3B82F6" BorderThickness="1"/>
+											<Button Name="BtnRemoveFolder" Click="BtnRemoveFolder_Click" Content="Remove" Background="Transparent" Foreground="#EF4444" BorderBrush="#EF4444" BorderThickness="1" Padding="20,8"/>
+											<Button Name="BtnAddFolder" Click="BtnAddFolder_Click" Content="+ Add Folder" Background="Transparent" Foreground="#3B82F6" BorderBrush="#3B82F6" BorderThickness="1" Padding="20,8"/>
 										</StackPanel>
 									</Grid>
 								</Border>
-
-								<Button Name="BtnToggleServer" Grid.Row="3" Click="BtnToggleServer_Click" Content="START SERVER"
-                                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
-                                        Background="#10B981" Foreground="White" FontSize="16" FontWeight="Bold"
-                                        CornerRadius="0,0,16,16" Height="60"/>
 							</Grid>
+						</Border>
+
+						<Button Name="BtnToggleServer" Click="BtnToggleServer_Click" Content="START SERVER" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Background="#10B981" Foreground="White" FontSize="16" FontWeight="Bold" CornerRadius="12" Height="60"/>
+
+						<Border Classes="card" Padding="25">
+							<StackPanel Spacing="15">
+								<StackPanel Orientation="Horizontal" Spacing="10">
+									<Path Classes="icon" Data="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z M2 12h20 M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" Width="24" Height="24" Stroke="{DynamicResource TextPrimary}" VerticalAlignment="Center"/>
+									<TextBlock Text="Server is live at:" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource TextPrimary}" VerticalAlignment="Center"/>
+								</StackPanel>
+					<ItemsControl ItemsSource="{Binding ActiveServerUrls}">
+    <ItemsControl.ItemTemplate>
+        <DataTemplate x:DataType="local:ServerUrlItem">
+            <StackPanel Margin="0,0,0,15">
+                <StackPanel Orientation="Horizontal" Spacing="6" Margin="5,0,0,5">
+                    <Path Classes="icon" Data="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z M2 12h20 M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" Width="12" Height="12" Stroke="{DynamicResource TextSecondary}" VerticalAlignment="Center"/>
+                    <TextBlock Text="{Binding NetworkName}" Foreground="{DynamicResource TextSecondary}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                </StackPanel>
+                
+                <Grid ColumnDefinitions="*, Auto">
+                    <TextBox Grid.Column="0" IsReadOnly="True" Text="{Binding Url}" FontSize="14" Foreground="{DynamicResource TextSecondary}" Background="{DynamicResource PageBackground}" BorderThickness="0" CornerRadius="6,0,0,6" Padding="15,10" VerticalContentAlignment="Center"/>
+                    <Button Grid.Column="1" Click="BtnCopySpecificIp_Click" Tag="{Binding Url}" Content="Copy" Background="#3B82F6" Foreground="White" CornerRadius="0,6,6,0" Padding="25,10"/>
+                </Grid>
+            </StackPanel>
+        </DataTemplate>
+    </ItemsControl.ItemTemplate>
+</ItemsControl>
+							</StackPanel>
 						</Border>
 
 						<Border Classes="card" Padding="0">
 							<Grid RowDefinitions="Auto, *">
-								<Border Background="#1F2937" CornerRadius="16,16,0,0" Padding="20,12">
+								<Border Background="Transparent" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1" CornerRadius="12,12,0,0" Padding="20,15">
 									<Grid ColumnDefinitions="*, Auto">
 										<StackPanel Orientation="Horizontal" Spacing="10">
-											<TextBlock Text=">_" Foreground="#10B981" FontWeight="Bold" FontFamily="Consolas" FontSize="16"/>
-											<TextBlock Text="Console Output" Foreground="White" FontWeight="SemiBold" VerticalAlignment="Center"/>
+											<Path Classes="icon" Data="M4 17l6-6-6-6 M12 19h8" Width="20" Height="20" Stroke="#10B981" VerticalAlignment="Center"/>
+											<TextBlock Text="Console Output" Foreground="{DynamicResource TextPrimary}" FontWeight="Bold" VerticalAlignment="Center"/>
 										</StackPanel>
-										<Button Grid.Column="1" Name="BtnCopyLogs" Click="BtnCopyLogs_Click" Content="Copy"
-                                                FontSize="12" Padding="10,4" Background="#374151" Foreground="White" CornerRadius="6" BorderThickness="0"/>
+										<Button Grid.Column="1" Name="BtnCopyLogs" Click="BtnCopyLogs_Click" Content="Copy" FontSize="12" Padding="15,6" Background="{DynamicResource PageBackground}" Foreground="{DynamicResource TextPrimary}" CornerRadius="6" BorderThickness="0"/>
 									</Grid>
 								</Border>
-								<TextBox Grid.Row="1" Name="TxtServerLogs" IsReadOnly="True" Height="180" TextWrapping="Wrap" AcceptsReturn="True"
-                                         FontFamily="Consolas, Monospace" FontSize="13" Background="#111827" Foreground="#D1D5DB"
-                                         BorderThickness="0" CornerRadius="0,0,16,16" Padding="20" SelectionBrush="#3B82F6"/>
+								<TextBox Grid.Row="1" Name="TxtServerLogs" IsReadOnly="True" Height="150" TextWrapping="Wrap" AcceptsReturn="True" FontFamily="Consolas, Monospace" FontSize="13" Background="Transparent" Foreground="#D1D5DB" BorderThickness="0" CornerRadius="0,0,12,12" Padding="20" SelectionBrush="#3B82F6"/>
 							</Grid>
 						</Border>
 					</StackPanel>
 				</ScrollViewer>
 			</Grid>
 
-			<Grid Name="TabScanner" RowDefinitions="Auto, *" IsVisible="False">
+			<Grid Name="TabRemoteBrowser" RowDefinitions="Auto, *" IsVisible="False">
+				<Border Grid.Row="0" Classes="card" Padding="15,15" Margin="0,0,0,20">
+					<Grid ColumnDefinitions="*, Auto, Auto, Auto">
+						
+						<ScrollViewer Grid.Column="0" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" Margin="0,0,15,0">
+							<StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+								<Button Click="BtnCloseRemote_Click" Background="Transparent" Foreground="#EF4444" BorderThickness="0" Padding="10,8" ToolTip.Tip="Disconnect Server">
+									<Path Classes="icon" Data="M18 6L6 18 M6 6l12 12" Width="16" Height="16" Stroke="#EF4444"/>
+								</Button>
+								
+								<Border Width="1" Background="{DynamicResource BorderBrush}" Margin="10,5"/>
+
+								<ItemsControl ItemsSource="{Binding Breadcrumbs}">
+									<ItemsControl.ItemsPanel>
+										<ItemsPanelTemplate>
+											<StackPanel Orientation="Horizontal" VerticalAlignment="Center"/>
+										</ItemsPanelTemplate>
+									</ItemsControl.ItemsPanel>
+									<ItemsControl.ItemTemplate>
+										<DataTemplate>
+											<StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+												<TextBlock Text="❯" Foreground="{DynamicResource TextSecondary}" FontSize="12" VerticalAlignment="Center" Margin="8,0" IsVisible="{Binding IsNotFirst}"/>
+												<Button Content="{Binding Title}" Tag="{Binding Id}" Click="BtnBreadcrumb_Click" Background="Transparent" Foreground="{DynamicResource TextPrimary}" FontWeight="{Binding FontWeight}" Padding="8,6" CornerRadius="6"/>
+											</StackPanel>
+										</DataTemplate>
+									</ItemsControl.ItemTemplate>
+								</ItemsControl>
+							</StackPanel>
+						</ScrollViewer>
+
+						<ComboBox Grid.Column="1" Name="CmbGridSize" SelectedIndex="1" Margin="0,0,10,0" Width="150" Background="{DynamicResource PageBackground}" SelectionChanged="CmbGridSize_SelectionChanged">
+							<ComboBoxItem Content="Small Grid"/>
+							<ComboBoxItem Content="Medium Grid"/>
+							<ComboBoxItem Content="Large Grid"/>
+							<ComboBoxItem Content="Extra Large (XL)"/>
+							<ComboBoxItem Content="Massive (XXL)"/>
+						</ComboBox>
+
+						<Button Grid.Column="2" Click="BtnPlayAll_Click" Background="#3B82F6" Foreground="White" Padding="15,8" Margin="0,0,10,0">
+							<StackPanel Orientation="Horizontal" Spacing="8">
+								<Path Classes="icon" Data="M5 3l14 9-14 9v-18z" Width="16" Height="16" Stroke="White"/>
+								<TextBlock Text="Play Folder"/>
+							</StackPanel>
+						</Button>
+						<Button Grid.Column="3" Click="BtnRemoteToggleView_Click" Background="{DynamicResource PageBackground}" Foreground="{DynamicResource TextPrimary}" Padding="12,8">
+							<Path Classes="icon" Data="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z" Width="18" Height="18" Stroke="{DynamicResource TextPrimary}"/>
+						</Button>
+					</Grid>
+				</Border>
+
+				<Panel Grid.Row="1">
+					<ScrollViewer Name="RemoteHomeScroller" IsVisible="True">
+						<StackPanel Spacing="30" Margin="0,0,15,20">
+
+							<StackPanel>
+								<TextBlock Text="My Media" FontSize="22" FontWeight="Bold" Foreground="{DynamicResource TextPrimary}" Margin="5,0,0,10"/>
+								<ListBox ItemsSource="{Binding RootItems}" DoubleTapped="ListRemoteFiles_DoubleTapped2" Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Disabled">
+									<ListBox.ItemsPanel>
+										<ItemsPanelTemplate>
+											<VirtualizingStackPanel Orientation="Horizontal"/>
+										</ItemsPanelTemplate>
+									</ListBox.ItemsPanel>
+									<ListBox.ItemTemplate>
+										<DataTemplate x:DataType="local:RemoteItem">
+											<Border Width="{Binding #RootWindow.GridItemWidth}" Classes="card" Padding="0" ClipToBounds="True" Cursor="Hand" Margin="5">
+												<Grid RowDefinitions="Auto, Auto">
+													<Border Grid.Row="0" Background="{DynamicResource IconBg}" Height="{Binding #RootWindow.GridItemHeight}">
+														<Panel>
+															<Path Classes="icon" Data="{Binding TypeIcon}" Width="36" Height="36" Stroke="{DynamicResource TextSecondary}" HorizontalAlignment="Center" VerticalAlignment="Center" IsVisible="{Binding IsIconVisible}" x:CompileBindings="False"/>
+															<Image Source="{Binding ThumbnailBitmap}" Stretch="UniformToFill" IsVisible="{Binding IsImageVisible}"/>
+														</Panel>
+													</Border>
+													<Border Grid.Row="1" Padding="12">
+														<TextBlock Text="{Binding Title}" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" FontSize="14" FontWeight="Bold" HorizontalAlignment="Center" Foreground="{DynamicResource TextPrimary}"/>
+													</Border>
+												</Grid>
+											</Border>
+										</DataTemplate>
+									</ListBox.ItemTemplate>
+								</ListBox>
+							</StackPanel>
+
+							<StackPanel Name="SectionContinueWatching">
+								<Grid ColumnDefinitions="*, Auto" Margin="5,0,15,10">
+									<TextBlock Text="Continue Watching" FontSize="22" FontWeight="Bold" Foreground="{DynamicResource TextPrimary}"/>
+									<Button Grid.Column="1" Content="See All ❯" Background="Transparent" Foreground="#3B82F6" Cursor="Hand" Padding="8,4" Click="BtnSeeAllHistory_Click"/>
+								</Grid>
+								<ListBox ItemsSource="{Binding ContinueWatchingItems}" DoubleTapped="ListRemoteFiles_DoubleTapped2" Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Disabled">
+									<ListBox.ItemsPanel>
+										<ItemsPanelTemplate>
+											<VirtualizingStackPanel Orientation="Horizontal"/>
+										</ItemsPanelTemplate>
+									</ListBox.ItemsPanel>
+									<ListBox.ItemTemplate>
+										<DataTemplate x:DataType="local:RemoteItem">
+											<Border Width="{Binding #RootWindow.GridItemWidth}" Classes="card" Padding="0" ClipToBounds="True" Cursor="Hand" Margin="5">
+												<Border.ContextMenu>
+													<ContextMenu>
+														<MenuItem Header="▶ Play" Click="CtxMenuPlay_Click"/>
+														<MenuItem Header="❌ Remove from History" Click="CtxMenuRemoveHistory_Click"/>
+													</ContextMenu>
+												</Border.ContextMenu>
+												<Grid RowDefinitions="Auto, Auto">
+													<Border Grid.Row="0" Background="{DynamicResource IconBg}" Height="{Binding #RootWindow.GridItemHeight}">
+														<Panel>
+															<Path Classes="icon" Data="{Binding TypeIcon}" Width="36" Height="36" Stroke="{DynamicResource TextSecondary}" HorizontalAlignment="Center" VerticalAlignment="Center" IsVisible="{Binding IsIconVisible}" x:CompileBindings="False"/>
+															<Image Source="{Binding ThumbnailBitmap}" Stretch="UniformToFill" IsVisible="{Binding IsImageVisible}"/>
+															<ProgressBar VerticalAlignment="Bottom" Height="5" Minimum="0" Maximum="100" Value="{Binding WatchProgress}" Foreground="#3B82F6" Background="Transparent" BorderThickness="0" IsVisible="{Binding HasProgress}"/>
+														</Panel>
+													</Border>
+													<Border Grid.Row="1" Padding="12">
+														<TextBlock Text="{Binding Title}" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}"/>
+													</Border>
+												</Grid>
+											</Border>
+										</DataTemplate>
+									</ListBox.ItemTemplate>
+								</ListBox>
+							</StackPanel>
+
+							<StackPanel Name="SectionRecommendations">
+								<Grid ColumnDefinitions="*, Auto" Margin="5,0,15,10">
+									<TextBlock Text="Recommended / Discover" FontSize="22" FontWeight="Bold" Foreground="{DynamicResource TextPrimary}"/>
+									<Button Grid.Column="1" Content="See All ❯" Background="Transparent" Foreground="#3B82F6" Cursor="Hand" Padding="8,4" Click="BtnSeeAllRandom_Click"/>
+								</Grid>
+								<ListBox ItemsSource="{Binding RandomItems}" DoubleTapped="ListRemoteFiles_DoubleTapped2" Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Disabled">
+									<ListBox.ItemsPanel>
+										<ItemsPanelTemplate>
+											<VirtualizingStackPanel Orientation="Horizontal"/>
+										</ItemsPanelTemplate>
+									</ListBox.ItemsPanel>
+									<ListBox.ItemTemplate>
+										<DataTemplate x:DataType="local:RemoteItem">
+											<Border Width="{Binding #RootWindow.GridItemWidth}" Classes="card" Padding="0" ClipToBounds="True" Cursor="Hand" Margin="5">
+												<Border.ContextMenu>
+													<ContextMenu>
+														<MenuItem Header="▶ Play" Click="CtxMenuPlay_Click"/>
+													</ContextMenu>
+												</Border.ContextMenu>
+												<Grid RowDefinitions="Auto, Auto">
+													<Border Grid.Row="0" Background="{DynamicResource IconBg}" Height="{Binding #RootWindow.GridItemHeight}">
+														<Panel>
+															<Path Classes="icon" Data="{Binding TypeIcon}" Width="36" Height="36" Stroke="{DynamicResource TextSecondary}" HorizontalAlignment="Center" VerticalAlignment="Center" IsVisible="{Binding IsIconVisible}" x:CompileBindings="False"/>
+															<Image Source="{Binding ThumbnailBitmap}" Stretch="UniformToFill" IsVisible="{Binding IsImageVisible}"/>
+														</Panel>
+													</Border>
+													<Border Grid.Row="1" Padding="12">
+														<TextBlock Text="{Binding Title}" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}"/>
+													</Border>
+												</Grid>
+											</Border>
+										</DataTemplate>
+									</ListBox.ItemTemplate>
+								</ListBox>
+							</StackPanel>
+						</StackPanel>
+					</ScrollViewer>
+
+					<Panel Name="RemoteFolderView" IsVisible="False">
+						
+						<ListBox Name="ListRemoteFiles_Grid" DoubleTapped="ListRemoteFiles_DoubleTapped2" Background="Transparent" BorderThickness="0" SelectionMode="Multiple">
+							<ListBox.ItemsPanel>
+								<ItemsPanelTemplate>
+									<WrapPanel HorizontalAlignment="Left" />
+								</ItemsPanelTemplate>
+							</ListBox.ItemsPanel>
+							<ListBox.ItemTemplate>
+								<DataTemplate x:DataType="local:RemoteItem">
+									<Border Width="{Binding #RootWindow.GridItemWidth}" Classes="card" Padding="0" ClipToBounds="True" Cursor="Hand" Margin="6">
+										<Border.ContextMenu>
+											<ContextMenu>
+												<MenuItem Header="▶ Play" Click="CtxMenuPlay_Click"/>
+												<MenuItem Header="❌ Remove from History" Click="CtxMenuRemoveHistory_Click"/>
+											</ContextMenu>
+										</Border.ContextMenu>
+										<Grid RowDefinitions="Auto, Auto">
+											<Border Grid.Row="0" Background="{DynamicResource IconBg}" Height="{Binding #RootWindow.GridItemHeight}">
+												<Panel>
+													<Path Classes="icon" Data="{Binding TypeIcon}" Width="36" Height="36" Stroke="{DynamicResource TextSecondary}" HorizontalAlignment="Center" VerticalAlignment="Center" IsVisible="{Binding IsIconVisible}" x:CompileBindings="False"/>
+													<Image Source="{Binding ThumbnailBitmap}" Stretch="UniformToFill" IsVisible="{Binding IsImageVisible}"/>
+													<ProgressBar VerticalAlignment="Bottom" Height="4" Minimum="0" Maximum="100" Value="{Binding WatchProgress}" Foreground="#3B82F6" Background="Transparent" BorderThickness="0" IsVisible="{Binding HasProgress}"/>
+												</Panel>
+											</Border>
+											<Border Grid.Row="1" Padding="12">
+												<StackPanel>
+													<TextBlock Text="{Binding Title}" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" FontSize="13" FontWeight="SemiBold" HorizontalAlignment="Left" Foreground="{DynamicResource TextPrimary}"/>
+													<TextBlock Text="{Binding Details}" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" FontSize="11" Margin="0,2,0,0" Foreground="{DynamicResource TextSecondary}"/>
+												</StackPanel>
+											</Border>
+										</Grid>
+									</Border>
+								</DataTemplate>
+							</ListBox.ItemTemplate>
+						</ListBox>
+
+						<ListBox Name="ListRemoteFiles_List" DoubleTapped="ListRemoteFiles_DoubleTapped2" Background="Transparent" BorderThickness="0" SelectionMode="Multiple" IsVisible="False">
+							<ListBox.ItemTemplate>
+								<DataTemplate x:DataType="local:RemoteItem">
+									<Border Classes="card" Padding="12" Cursor="Hand" Margin="6">
+										<Border.ContextMenu>
+											<ContextMenu>
+												<MenuItem Header="▶ Play" Click="CtxMenuPlay_Click"/>
+												<MenuItem Header="❌ Remove from History" Click="CtxMenuRemoveHistory_Click"/>
+											</ContextMenu>
+										</Border.ContextMenu>
+										<Grid ColumnDefinitions="Auto, *, Auto">
+											<Border Width="45" Height="45" CornerRadius="8" Background="{DynamicResource IconBg}" ClipToBounds="True">
+    <Panel>
+        <Path Classes="icon" Data="{Binding TypeIcon}" Width="24" Height="24" Stroke="{DynamicResource TextSecondary}" HorizontalAlignment="Center" VerticalAlignment="Center" IsVisible="{Binding IsIconVisible}" x:CompileBindings="False"/>
+        
+        <Image Source="{Binding ThumbnailBitmap}" Stretch="UniformToFill" IsVisible="{Binding IsImageVisible}"/>
+    </Panel>
+</Border>
+											<StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="15,0,0,0">
+												<TextBlock Text="{Binding Title}" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}" TextTrimming="CharacterEllipsis"/>
+												<TextBlock Text="{Binding Details}" FontSize="12" Foreground="{DynamicResource TextSecondary}" Margin="0,2,0,0"/>
+											</StackPanel>
+											<ProgressBar Grid.Column="2" VerticalAlignment="Center" Width="100" Height="4" Minimum="0" Maximum="100" Value="{Binding WatchProgress}" Foreground="#3B82F6" Background="{DynamicResource ProgressBarBg}" BorderThickness="0" IsVisible="{Binding HasProgress}"/>
+										</Grid>
+									</Border>
+								</DataTemplate>
+							</ListBox.ItemTemplate>
+						</ListBox>
+					</Panel>
+				</Panel>
+			</Grid>
+
+			<Grid Name="TabServers" RowDefinitions="Auto, *" IsVisible="False">
 				<StackPanel>
 					<Border Classes="card" Padding="25">
 						<Grid ColumnDefinitions="*, Auto">
 							<StackPanel>
-								<TextBlock Text="Device Scanner" FontSize="22" FontWeight="Bold" Foreground="{DynamicResource TextPrimary}"/>
-								<TextBlock Text="Discover other LocalStream servers on your LAN" Foreground="{DynamicResource TextSecondary}" Margin="0,5,0,0"/>
+								<TextBlock Text="Available Servers" FontSize="22" FontWeight="Bold" Foreground="{DynamicResource TextPrimary}"/>
+								<TextBlock Text="Discover and connect to LocalStream or UPnP servers on your LAN" Foreground="{DynamicResource TextSecondary}" Margin="0,5,0,0"/>
 							</StackPanel>
-							<Button Grid.Column="1" Name="BtnScan" Click="BtnScan_Click" Content="🔄 Scan Network"
-                                    Background="#3B82F6" Foreground="White" Padding="20,10"/>
+							<Button Grid.Column="1" Name="BtnScan" Click="BtnScan_Click" Content="🔄 Refresh Network" Background="#3B82F6" Foreground="White" Padding="20,10"/>
 						</Grid>
 					</Border>
 
 					<Border Classes="card" Padding="0" Background="Transparent" BoxShadow="">
-						<ListBox Name="ListDevices" Background="Transparent" Margin="0">
+						<ListBox Name="ListDevices" Background="Transparent" Margin="0" DoubleTapped="ListDevices_DoubleTapped">
 							<ListBox.ItemsPanel>
 								<ItemsPanelTemplate>
 									<WrapPanel />
@@ -239,14 +514,24 @@
 							</ListBox.ItemsPanel>
 							<ListBox.ItemTemplate>
 								<DataTemplate x:DataType="local:UpnpDevice">
-									<Border Width="280" Background="{DynamicResource CardBackground}" CornerRadius="16" Padding="20" Margin="0,0,20,20" BoxShadow="0 4 10 0 #15000000">
-										<Grid RowDefinitions="Auto, Auto, Auto">
-											<Border Width="50" Height="50" CornerRadius="25" Background="{DynamicResource IconBg}" HorizontalAlignment="Left" Margin="0,0,0,15">
-												<TextBlock Text="🖥️" FontSize="24" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-											</Border>
+									<Border Width="320" Background="{DynamicResource CardBackground}" CornerRadius="12" Padding="20" Margin="0,0,20,20" BoxShadow="0 4 15 0 #10000000">
+										<Grid RowDefinitions="Auto, *, Auto">
+											<StackPanel Orientation="Horizontal" Spacing="15" Grid.Row="0">
+												<Border Width="45" Height="45" CornerRadius="8" Background="{DynamicResource IconBg}">
+													<Path Classes="icon" Data="M2 6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6z M2 16a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-4z M6 8h.01 M6 18h.01" Width="24" Height="24" Stroke="{DynamicResource TextSecondary}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+												</Border>
+												<StackPanel VerticalAlignment="Center">
+													<TextBlock Text="{Binding FriendlyName}" FontWeight="Bold" FontSize="16" Foreground="{DynamicResource TextPrimary}" TextTrimming="CharacterEllipsis" MaxWidth="210"/>
+													<StackPanel Orientation="Horizontal" Spacing="6" Margin="0,4,0,0">
+														<Ellipse Width="8" Height="8" Fill="#10B981"/>
+														<TextBlock Text="Online" FontSize="12" Foreground="#10B981" FontWeight="SemiBold"/>
+													</StackPanel>
+												</StackPanel>
+											</StackPanel>
 
-											<TextBlock Grid.Row="1" Text="{Binding FriendlyName}" FontWeight="Bold" FontSize="16" Foreground="{DynamicResource TextPrimary}" TextTrimming="CharacterEllipsis"/>
-											<TextBlock Grid.Row="2" Text="{Binding BaseUrl}" Foreground="{DynamicResource TextSecondary}" FontSize="12" Margin="0,5,0,0" TextTrimming="CharacterEllipsis"/>
+											<TextBlock Grid.Row="1" Text="{Binding BaseUrl}" Foreground="{DynamicResource TextSecondary}" FontSize="12" Margin="0,15,0,15" TextTrimming="CharacterEllipsis"/>
+
+											<Button Grid.Row="2" Click="BtnConnectServer_Click" Tag="{Binding}" Content="Connect to Server" Background="{DynamicResource IconBg}" Foreground="{DynamicResource TextPrimary}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"/>
 										</Grid>
 									</Border>
 								</DataTemplate>
@@ -256,36 +541,79 @@
 				</StackPanel>
 			</Grid>
 
-			<StackPanel Name="TabSettings" IsVisible="False" HorizontalAlignment="Left" Width="600">
-				<Border Classes="card" Padding="40">
-					<StackPanel Spacing="30">
-						<StackPanel>
-							<TextBlock Text="Configuration" FontSize="24" FontWeight="Bold" Foreground="{DynamicResource TextPrimary}"/>
-							<TextBlock Text="Manage general application settings" Foreground="{DynamicResource TextSecondary}" Margin="0,5,0,0"/>
-						</StackPanel>
+			<Grid Name="TabSettings" IsVisible="False">
+				<ScrollViewer AllowAutoHide="False">
+					<StackPanel HorizontalAlignment="Left" Width="600" Margin="0,0,15,20">
+						<Border Classes="card" Padding="40">
+							<StackPanel Spacing="25">
 
-						<StackPanel Spacing="10">
-							<TextBlock Text="Server Port" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}"/>
-							<TextBox Name="TxtPort" Text="8080" Width="150" HorizontalAlignment="Left"/>
-							<TextBlock Text="Default UPnP port is 8080. Changing this requires a restart." FontSize="13" Foreground="{DynamicResource TextSecondary}"/>
-						</StackPanel>
+								<StackPanel>
+									<TextBlock Text="Configuration" FontSize="24" FontWeight="Bold" Foreground="{DynamicResource TextPrimary}"/>
+									<TextBlock Text="Manage general application and network settings" Foreground="{DynamicResource TextSecondary}" Margin="0,5,0,0"/>
+								</StackPanel>
 
-						<Border Background="{DynamicResource BorderBrush}" Height="1"/>
+								<StackPanel Spacing="10">
+									<TextBlock Text="Server Port" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}"/>
+									<TextBox Name="TxtPort" Text="8080" Width="150" HorizontalAlignment="Left"/>
+									<TextBlock Text="Default UPnP port is 8080. Changing this requires a restart." FontSize="13" Foreground="{DynamicResource TextSecondary}"/>
+								</StackPanel>
 
-						<StackPanel Spacing="15">
-							<CheckBox Name="ChkRunAtStartup" Content="Run app at Windows Startup"/>
-							<CheckBox Name="ChkMinimizeToTray" Content="Minimize to System Tray on Close"/>
-							<CheckBox Name="ChkAutoStartServer" Content="Auto-start Server when App opens"/>
-						</StackPanel>
+								<Border Background="{DynamicResource BorderBrush}" Height="1"/>
 
-						<Border Background="{DynamicResource BorderBrush}" Height="1"/>
+								<StackPanel Spacing="15">
+									<CheckBox Name="ChkRunAtStartup" Content="Run app at Windows Startup"/>
+									<CheckBox Name="ChkMinimizeToTray" Content="Minimize to System Tray on Close"/>
+									<CheckBox Name="ChkAutoStartServer" Content="Auto-start Server when App opens"/>
+								</StackPanel>
 
-						<Button Name="BtnSaveSettings" Click="BtnSaveSettings_Click" Content="💾 Save Settings"
-                                Background="#3B82F6" Foreground="White" HorizontalAlignment="Left" Padding="30,12"/>
+								<Border Background="{DynamicResource BorderBrush}" Height="1"/>
+
+								<StackPanel Spacing="15">
+									<StackPanel>
+										<TextBlock Text="Security &amp; Permissions" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}"/>
+										<TextBlock Text="Protect your web interface from unauthorized network access" Foreground="{DynamicResource TextSecondary}" Margin="0,2,0,10" FontSize="13"/>
+									</StackPanel>
+
+									<CheckBox Name="ChkEnableAuth" Content="Enable Web Authentication (Requires Login)"/>
+									<CheckBox Name="ChkAllowDeletion" Content="Allow Admin to Delete files via Web Interface"/>
+
+									<Grid ColumnDefinitions="*, *" RowDefinitions="Auto, Auto, Auto, Auto" Margin="0,10,0,0">
+
+										<TextBlock Grid.Row="0" Grid.Column="0" Text="Admin Username" Foreground="{DynamicResource TextSecondary}" Margin="0,0,10,5" FontSize="13"/>
+										<TextBox Grid.Row="1" Grid.Column="0" Name="TxtAdminUsername" Margin="0,0,10,15"/>
+
+										<TextBlock Grid.Row="2" Grid.Column="0" Text="Admin Password (Full Access)" Foreground="{DynamicResource TextSecondary}" Margin="0,0,10,5" FontSize="13"/>
+										<TextBox Grid.Row="3" Grid.Column="0" Name="TxtAdminPassword" PasswordChar="*" Margin="0,0,10,0">
+											<TextBox.InnerRightContent>
+												<Button Click="BtnToggleAdminPwd_Click" Background="Transparent" BorderThickness="0" Padding="10,0" Cursor="Hand">
+													<TextBlock Text="👁️" Opacity="0.7"/>
+												</Button>
+											</TextBox.InnerRightContent>
+										</TextBox>
+
+										<TextBlock Grid.Row="0" Grid.Column="1" Text="Viewer Username" Foreground="{DynamicResource TextSecondary}" Margin="10,0,0,5" FontSize="13"/>
+										<TextBox Grid.Row="1" Grid.Column="1" Name="TxtViewerUsername" Margin="10,0,0,15"/>
+
+										<TextBlock Grid.Row="2" Grid.Column="1" Text="Viewer Password (Read-Only)" Foreground="{DynamicResource TextSecondary}" Margin="10,0,0,5" FontSize="13"/>
+										<TextBox Grid.Row="3" Grid.Column="1" Name="TxtViewerPassword" PasswordChar="*" Margin="10,0,0,0">
+											<TextBox.InnerRightContent>
+												<Button Click="BtnToggleViewerPwd_Click" Background="Transparent" BorderThickness="0" Padding="10,0" Cursor="Hand">
+													<TextBlock Text="👁️" Opacity="0.7"/>
+												</Button>
+											</TextBox.InnerRightContent>
+										</TextBox>
+
+									</Grid>
+								</StackPanel>
+
+								<Border Background="{DynamicResource BorderBrush}" Height="1" Margin="0,10,0,0"/>
+
+								<Button Name="BtnSaveSettings" Click="BtnSaveSettings_Click" Content="💾 Save Settings" Background="#3B82F6" Foreground="White" HorizontalAlignment="Left" Padding="30,12"/>
+							</StackPanel>
+						</Border>
 					</StackPanel>
-				</Border>
-			</StackPanel>
-
+				</ScrollViewer>
+			</Grid>
 		</Panel>
 	</Grid>
 </Window>

@@ -39,18 +39,21 @@
 </a>
 
 <p align="center">
-  <img src="https://github.com/manjeetdeswal/Local-Stream-Upnp---Http-Server-/blob/main/LocalStreamPC/ss/Screenshot%202026-02-26%20104009.png" width="45%" alt="Home Screen" />
-  <img src="https://github.com/manjeetdeswal/Local-Stream-Upnp---Http-Server-/blob/main/LocalStreamPC/ss/Screenshot%202026-02-26%20104108.png" width="45%" alt="Smart Touchpad" />
+  <img src="https://github.com/manjeetdeswal/Local-Stream-Upnp---Http-Server-/blob/main/ss/Screenshot%202026-06-01%20182012.png" width="45%" alt="Home Screen" />
+  <img src="https://github.com/manjeetdeswal/Local-Stream-Upnp---Http-Server-/blob/main/ss/Screenshot%202026-06-01%20182038.png" width="45%" alt="Smart Touchpad" />
 </p>
 <p align="center">
-  <img src="https://github.com/manjeetdeswal/Local-Stream-Upnp---Http-Server-/blob/main/LocalStreamPC/ss/Screenshot%202026-02-26%20104219.png" width="45%" alt="Keyboard" />
-  <img src="https://github.com/manjeetdeswal/Local-Stream-Upnp---Http-Server-/blob/main/LocalStreamPC/ss/Screenshot%202026-02-26%20104316.png" width="45%" alt="Display Extension" />
+  <img src="https://github.com/manjeetdeswal/Local-Stream-Upnp---Http-Server-/blob/main/ss/Screenshot%202026-06-01%20182047.png" width="45%" alt="Keyboard" />
+  <img src="https://github.com/manjeetdeswal/Local-Stream-Upnp---Http-Server-/blob/main/ss/Screenshot%202026-06-01%20182202.png" width="45%" alt="Display Extension" />
 </p>
 <p align="center">
-  <img src="https://github.com/manjeetdeswal/Local-Stream-Upnp---Http-Server-/blob/main/LocalStreamPC/ss/Screenshot%202026-02-26%20104341.png" width="45%" alt="Mic Streaming" />
-  <img src="https://github.com/manjeetdeswal/Local-Stream-Upnp---Http-Server-/blob/main/LocalStreamPC/ss/Screenshot%202026-02-26%20104516.png" width="45%" alt="Mic Streaming" />
+  <img src="https://github.com/manjeetdeswal/Local-Stream-Upnp---Http-Server-/blob/main/ss/Screenshot%202026-06-01%20182224.png" width="45%" alt="Mic Streaming" />
+  <img src="https://github.com/manjeetdeswal/Local-Stream-Upnp---Http-Server-/blob/main/ss/Screenshot%202026-06-01%20182238.png" width="45%" alt="Mic Streaming" />
 </p>
-
+<p align="center">
+  <img src="https://github.com/manjeetdeswal/Local-Stream-Upnp---Http-Server-/blob/main/ss/Screenshot%202026-06-01%20182253.png" width="45%" alt="Keyboard" />
+  <img src="https://github.com/manjeetdeswal/Local-Stream-Upnp---Http-Server-/blob/main/ss/Screenshot%202026-06-01%20182408.png" width="45%" alt="Display Extension" />
+</p>
 
 </div>
 

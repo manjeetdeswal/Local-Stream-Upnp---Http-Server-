@@ -39,7 +39,7 @@
 </a>
 
 <p align="center">
-  <img src="https://github.com/manjeetdeswal/Local-Stream-Upnp---Http-Server-/blob/main/ss/Screenshot%202026-06-01%20182012.png" width="45%" alt="Home Screen" />
+  <img src="https://github.com/manjeetdeswal/Local-Stream-Upnp---Http-Server-/blob/main/ss/Screenshot%202026-06-01%20183042.png?raw=true" width="45%" alt="Home Screen" />
   <img src="https://github.com/manjeetdeswal/Local-Stream-Upnp---Http-Server-/blob/main/ss/Screenshot%202026-06-01%20182038.png" width="45%" alt="Smart Touchpad" />
 </p>
 <p align="center">

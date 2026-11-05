@@ -1,0 +1,256 @@
+# Builds LocalStream for the platforms you pick and (optionally) publishes a GitHub release.
+# It never runs on its own: open the "Actions" tab → "Build & release" → "Run workflow".
+
+name: Build & release
+
+on:
+  workflow_dispatch:
+    inputs:
+      windows:
+        description: "Build for Windows (installer + portable zip)"
+        type: boolean
+        default: true
+      linux:
+        description: "Build for Linux (x64 .tar.gz)"
+        type: boolean
+        default: true
+      macos:
+        description: "Build for macOS (Apple Silicon + Intel .app)"
+        type: boolean
+        default: true
+      release:
+        description: "Publish a GitHub release with the builds (off = just keep them as downloadable artifacts)"
+        type: boolean
+        default: true
+      version:
+        description: "Version, e.g. 1.2.1 (leave blank to use <Version> from LocalStreamPC.csproj)"
+        type: string
+        required: false
+        default: ""
+      prerelease:
+        description: "Mark the release as a pre-release (the app's updater skips pre-releases)"
+        type: boolean
+        default: false
+      draft:
+        description: "Create the release as a draft (review it before it goes public)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PROJECT: LocalStreamPC/LocalStreamPC.csproj
+  DOTNET_VERSION: "8.0.x"
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+
+jobs:
+  # ------------------------------------------------------------------ what to build
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: LocalStreamPC/LocalStreamPC.csproj
+          sparse-checkout-cone-mode: false
+
+      - name: Work out the version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          v="${INPUT_VERSION#v}"
+          if [ -z "$v" ]; then
+            v=$(grep -oPm1 '(?<=<Version>)[^<]+' "$PROJECT")
+          fi
+          if ! [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::'$v' is not a version like 1.2.1"; exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "### Building LocalStream $v" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Pick the platforms
+        id: matrix
+        env:
+          WIN: ${{ inputs.windows }}
+          LINUX: ${{ inputs.linux }}
+          MAC: ${{ inputs.macos }}
+        run: |
+          items=()
+          [ "$WIN" = "true" ]   && items+=('{"name":"windows-x64","os":"windows-latest","rid":"win-x64"}')
+          [ "$LINUX" = "true" ] && items+=('{"name":"linux-x64","os":"ubuntu-latest","rid":"linux-x64"}')
+          [ "$MAC" = "true" ]   && items+=('{"name":"macos-arm64","os":"macos-latest","rid":"osx-arm64"}' '{"name":"macos-x64","os":"macos-latest","rid":"osx-x64"}')
+          if [ ${#items[@]} -eq 0 ]; then echo "::error::Tick at least one platform."; exit 1; fi
+          json="{\"include\":[$(IFS=,; echo "${items[*]}")]}"
+          echo "matrix=$json" >> "$GITHUB_OUTPUT"
+
+  # ------------------------------------------------------------------ build
+  build:
+    needs: plan
+    name: build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Set the version in the project
+        shell: pwsh
+        run: |
+          $p = $env:PROJECT
+          $num = ($env:VERSION -split '[-+]')[0]
+          $four = (($num.Split('.') + @('0','0','0','0'))[0..3]) -join '.'
+          (Get-Content $p -Raw) `
+            -replace '<Version>[^<]*</Version>', "<Version>$env:VERSION</Version>" `
+            -replace '<AssemblyVersion>[^<]*</AssemblyVersion>', "<AssemblyVersion>$four</AssemblyVersion>" `
+            -replace '<FileVersion>[^<]*</FileVersion>', "<FileVersion>$four</FileVersion>" |
+            Set-Content $p -NoNewline
+          Select-String -Path $p -Pattern '<Version>'
+
+      # ---------------- Windows: installer (Inno Setup) + portable zip
+      - name: Install Inno Setup
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $iscc = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ }
+          if (-not $iscc) { choco install innosetup --no-progress -y }
+
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./installer/build-installer.ps1
+
+      - name: Package Windows files
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item "installer/output/LocalStream-Setup-$env:VERSION.exe" dist/
+          Compress-Archive -Path installer/publish/* -DestinationPath "dist/LocalStream-$env:VERSION-windows-x64-portable.zip"
+          Get-ChildItem dist
+
+      # ---------------- Linux: self-contained folder in a .tar.gz
+      - name: Build Linux
+        if: runner.os == 'Linux'
+        run: |
+          dotnet publish "$PROJECT" -c Release -r ${{ matrix.rid }} --self-contained true \
+            -p:PublishSingleFile=false -p:DebugType=None -o "out/LocalStream"
+          chmod +x out/LocalStream/LocalStreamPC out/LocalStream/ffmpeg out/LocalStream/ffprobe 2>/dev/null || true
+          cat > out/LocalStream/README.txt <<'TXT'
+          LocalStream for Linux
+          Run:  ./LocalStreamPC
+          The built-in cast player uses the system VLC library: install "vlc" (e.g. sudo apt install vlc).
+          TXT
+          mkdir -p dist
+          tar -C out -czf "dist/LocalStream-$VERSION-linux-x64.tar.gz" LocalStream
+          ls -lh dist
+
+      # ---------------- macOS: LocalStream.app in a zip (ad-hoc signed, not notarized)
+      - name: Build macOS app
+        if: runner.os == 'macOS'
+        run: |
+          dotnet publish "$PROJECT" -c Release -r ${{ matrix.rid }} --self-contained true \
+            -p:PublishSingleFile=false -p:DebugType=None -o out/publish
+          APP="out/LocalStream.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp -R out/publish/. "$APP/Contents/MacOS/"
+          chmod +x "$APP/Contents/MacOS/LocalStreamPC" "$APP/Contents/MacOS/ffmpeg" "$APP/Contents/MacOS/ffprobe" 2>/dev/null || true
+
+          ICON_KEY=""
+          if sips -s format png LocalStreamPC/Assets/app-icon.ico --out out/icon.png >/dev/null 2>&1; then
+            ICONSET=out/AppIcon.iconset; mkdir -p "$ICONSET"
+            for s in 16 32 64 128 256 512; do
+              sips -z $s $s out/icon.png --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
+              d=$((s*2)); sips -z $d $d out/icon.png --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
+            done
+            iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns" && ICON_KEY="<key>CFBundleIconFile</key><string>AppIcon</string>"
+          fi
+
+          cat > "$APP/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key><string>LocalStream</string>
+            <key>CFBundleDisplayName</key><string>LocalStream</string>
+            <key>CFBundleIdentifier</key><string>com.manjeetdeswal.localstream</string>
+            <key>CFBundleExecutable</key><string>LocalStreamPC</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>${VERSION}</string>
+            <key>CFBundleVersion</key><string>${VERSION}</string>
+            <key>LSMinimumSystemVersion</key><string>11.0</string>
+            <key>NSHighResolutionCapable</key><true/>
+            <key>NSLocalNetworkUsageDescription</key><string>LocalStream shares your media with phones, TVs and other computers on your network.</string>
+            ${ICON_KEY}
+          </dict>
+          </plist>
+          PLIST
+
+          codesign --force --deep --sign - "$APP"
+          mkdir -p dist
+          ditto -c -k --keepParent "$APP" "dist/LocalStream-$VERSION-${{ matrix.name }}.zip"
+          ls -lh dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LocalStream-${{ env.VERSION }}-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  # ------------------------------------------------------------------ release
+  release:
+    needs: [plan, build]
+    if: inputs.release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Write release notes
+        run: |
+          ls -lh dist
+          cat > notes.md <<'MD'
+          ## Downloads
+
+          | Platform | File |
+          |---|---|
+          | **Windows** | `LocalStream-Setup-*.exe` (installer, the app updates itself from it) or the `windows-x64-portable.zip` |
+          | **Linux** | `linux-x64.tar.gz` — unpack and run `./LocalStreamPC` (install `vlc` for the built-in cast player) |
+          | **macOS** | `macos-arm64.zip` for Apple Silicon, `macos-x64.zip` for Intel. The app isn't notarized: the first time, right-click it → **Open**, or run `xattr -cr LocalStream.app` |
+
+          MD
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION }}
+          name: LocalStream ${{ env.VERSION }}
+          target_commitish: ${{ github.sha }}
+          body_path: notes.md
+          generate_release_notes: true
+          prerelease: ${{ inputs.prerelease }}
+          draft: ${{ inputs.draft }}
+          fail_on_unmatched_files: true
+          files: dist/*

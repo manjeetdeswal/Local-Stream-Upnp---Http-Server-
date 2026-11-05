@@ -361,3 +361,31 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# ---------------------------------------------------------------- LocalStream
+
+# Rider / VS Code / OS clutter
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.orig
+*.swp
+
+# Old copies kept during the refactor
+_backup_before_refactor/
+
+# Installer build output (build-installer.ps1)
+installer/publish/
+installer/output/
+
+# Duplicate ffmpeg copies. The build uses only LocalStreamPC/Binaries/<os>/ (see LocalStreamPC.csproj).
+/LocalStreamPC/ffmpeg
+/LocalStreamPC/ffprobe
+/LocalStreamPC/linux/
+/LocalStreamPC/mac/
+/LocalStreamPC/win/
+/LocalStreamPC/publish/
+
+# Local NuGet settings (machine specific)
+nuget.config

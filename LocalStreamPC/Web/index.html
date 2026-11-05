@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html data-theme="light" lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>LocalStream</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <meta name="theme-color" content="#0f172a">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="LocalStream">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+  <script src="/library.js" defer></script>
+</head>
+<body>
+  <nav class="breadcrumbs" id="breadcrumbs"></nav>
+
+  <div class="top-bar">
+    <div class="title" id="title"></div>
+    <div class="controls">
+      <div class="input-group">
+        <span data-icon="search"></span>
+        <input type="search" id="searchInput" class="search-input" placeholder="Search..." autocomplete="off" enterkeyhint="search">
+      </div>
+      <button id="btnSelectMode" class="icon-btn labelled" title="Select multiple files" hidden><span data-icon="check-square"></span> Select</button>
+      <select id="sortSelect" class="select-dropdown" title="Sort">
+        <option value="name-asc">Name (A-Z)</option>
+        <option value="name-desc">Name (Z-A)</option>
+        <option value="size-desc">Size (Largest)</option>
+        <option value="size-asc">Size (Smallest)</option>
+      </select>
+      <div class="grid-select-wrapper">
+        <select id="gridSizeSelect" class="select-dropdown" title="Grid size">
+          <option value="150">Small Grid</option>
+          <option value="200">Medium Grid</option>
+          <option value="280">Large Grid</option>
+          <option value="350">Extra Large</option>
+        </select>
+      </div>
+      <button id="btnTheme" class="icon-btn" title="Theme"><span data-icon="moon"></span></button>
+      <button id="btnView" class="icon-btn" title="Grid / list"><span data-icon="grid"></span></button>
+      <button id="btnInstall" class="icon-btn labelled" title="Install LocalStream as an app" hidden><span data-icon="download"></span> Install app</button>
+      <div class="user-menu" id="userMenu" hidden>
+        <button id="btnUser" class="icon-btn labelled" title="Account" aria-haspopup="true"><span data-icon="user"></span> <span id="userName"></span></button>
+        <div class="menu-pop" id="userPop" hidden>
+          <div class="meta" id="userRole"></div>
+          <button id="btnMyLinks" class="menu-item" type="button" hidden><span data-icon="link"></span> Links I shared</button>
+          <button id="btnLogout" class="menu-item" type="button"><span data-icon="log-out"></span> Sign out</button>
+        </div>
+      </div>
+      <span id="adminControls" class="controls" hidden>
+        <button id="btnPaste" class="btn btn-primary btn-paste" hidden><span data-icon="clipboard"></span> <span id="pasteLabel">Paste</span></button>
+        <button id="btnNewFolder" class="btn btn-secondary"><span data-icon="folder-plus"></span> New Folder</button>
+        <input type="file" id="fileInput" multiple hidden>
+        <button id="btnUpload" class="btn btn-success"><span data-icon="upload"></span> <span id="uploadLabel">Upload</span></button>
+      </span>
+    </div>
+  </div>
+
+  <nav class="nav-tabs" id="navTabs" hidden>
+    <a class="tab" data-view="" href="/">Home</a>
+    <a class="tab" data-view="movies" href="/?view=movies" hidden>Movies</a>
+    <a class="tab" data-view="shows" href="/?view=shows" hidden>TV shows</a>
+    <a class="tab" data-view="webseries" href="/?view=webseries" hidden>Web series</a>
+    <a class="tab" data-view="music" href="/?view=music" hidden>Music</a>
+    <a class="tab" data-view="photos" href="/?view=photos" hidden>Photos</a>
+    <a class="tab" data-view="favorites" href="/?view=favorites">Favorites</a>
+    <a class="tab" data-view="playlists" href="/?view=playlists">Playlists</a>
+    <a class="tab" data-view="offline" href="/?view=offline" hidden>Saved</a>
+  </nav>
+
+  <div id="message" class="message" hidden></div>
+
+  <section id="searchResults" class="section" hidden>
+    <div class="section-head"><h2 id="searchTitle">In all folders</h2><span id="searchNote" class="meta"></span></div>
+    <div id="searchList" class="container list"></div>
+  </section>
+
+  <section id="homeContinue" class="section" hidden>
+    <div class="section-head"><h2>Continue watching</h2></div>
+    <div id="continueRow" class="row-scroll"></div>
+  </section>
+  <section id="homeRecent" class="section" hidden>
+    <div class="section-head"><h2>Recently added</h2></div>
+    <div id="recentRow" class="row-scroll"></div>
+  </section>
+  <div id="librariesHead" class="section-head" hidden><h2>Libraries</h2></div>
+
+  <div id="container" class="container grid"></div>
+
+  <div id="selectionBar" class="selection-bar">
+    <span id="selCount" class="sel-count">0 selected</span>
+    <div class="sel-actions">
+      <button id="btnDownloadEach" class="btn btn-secondary"><span data-icon="download"></span> Download 1-by-1</button>
+      <button id="btnZipSelected" class="btn btn-primary"><span data-icon="download"></span> Zip Selected Files</button>
+      <button id="btnCopySelected" class="btn btn-secondary admin-only"><span data-icon="copy"></span> Copy</button>
+      <button id="btnCutSelected" class="btn btn-secondary admin-only"><span data-icon="scissors"></span> Cut</button>
+      <button id="btnDeleteSelected" class="btn btn-danger admin-only"><span data-icon="trash"></span> Delete</button>
+    </div>
+  </div>
+
+  <!-- In-page player for video, music and photos -->
+  <div id="player" class="player" hidden>
+    <div class="player-stage" id="playerStage">
+      <video id="video" playsinline preload="metadata"></video>
+      <img id="photo" class="photo" alt="" hidden>
+      <div id="audioArt" class="audio-art" hidden>
+        <img id="audioCover" alt="">
+        <div class="audio-title" id="audioTitle"></div>
+        <div class="audio-sub" id="audioSub"></div>
+        <div class="lyrics" id="lyrics" hidden></div>
+      </div>
+      <aside class="queue-panel" id="queuePanel" hidden>
+        <div class="queue-head"><strong>Up next</strong><button id="btnQueueClose" class="icon-btn dark" title="Close"><span data-icon="x"></span></button></div>
+        <div id="queueList" class="queue-list"></div>
+      </aside>
+      <div id="playerSpinner" class="spinner" hidden></div>
+      <div id="playerNotice" class="player-notice" hidden></div>
+      <div id="resumePrompt" class="resume-prompt" hidden>
+        <button id="btnResume" class="btn btn-primary"></button>
+        <button id="btnStartOver" class="btn btn-secondary">Start over</button>
+      </div>
+      <button id="btnSkipIntro" class="skip-intro" type="button" hidden>Skip intro</button>
+      <div id="nextUp" class="next-up" hidden>
+        <div class="meta">Up next</div>
+        <div class="next-up-title" id="nextUpTitle"></div>
+        <div class="next-up-actions">
+          <button id="btnNextNow" class="btn btn-primary" type="button"><span data-icon="play-solid"></span> Play now <span id="nextUpCount"></span></button>
+          <button id="btnNextCancel" class="btn btn-secondary" type="button">Cancel</button>
+        </div>
+      </div>
+      <button id="btnPrevPhoto" class="photo-nav prev" title="Previous (←)" hidden><span data-icon="chevron-left"></span></button>
+      <button id="btnNextPhoto" class="photo-nav next" title="Next (→)" hidden><span data-icon="chevron-right"></span></button>
+    </div>
+    <div class="player-top">
+      <div class="player-name" id="playerName"></div>
+      <button id="btnPlayerWatched" class="icon-btn dark" title="Mark as watched" hidden><span data-icon="check"></span></button>
+      <button id="btnPlayerFav" class="icon-btn dark" title="Add to favorites"><span data-icon="heart"></span></button>
+      <button id="btnPlayerPlaylist" class="icon-btn dark" title="Add to a playlist"><span data-icon="list-plus"></span></button>
+      <button id="btnPlayerTv" class="icon-btn dark" title="Play on TV"><span data-icon="tv"></span></button>
+      <button id="btnPlayerClose" class="icon-btn dark" title="Close (Esc)"><span data-icon="x"></span></button>
+    </div>
+    <div class="player-menu" id="playerMenu" hidden>
+      <div class="menu-group"><div class="menu-label">Speed</div><div class="chips" id="speedChips"></div></div>
+      <div class="menu-group"><div class="menu-label">Sleep timer</div><div class="chips" id="sleepChips"></div></div>
+      <button id="btnPip" class="menu-item" type="button" hidden><span data-icon="pip"></span> Picture in picture</button>
+      <button id="btnOffline" class="menu-item" type="button" hidden><span data-icon="download"></span> <span id="offlineLabel">Save for offline</span></button>
+    </div>
+    <div class="player-bar" id="playerBar">
+      <input type="range" id="seek" class="seek" min="0" max="1000" value="0" step="1" aria-label="Seek">
+      <div class="bar-row">
+        <button id="btnPrevTrack" class="icon-btn dark" title="Previous" hidden><span data-icon="skip-back"></span></button>
+        <button id="btnPlay" class="icon-btn dark big" title="Play / pause (Space)"><span data-icon="play-solid"></span></button>
+        <button id="btnNextTrack" class="icon-btn dark" title="Next" hidden><span data-icon="skip-forward"></span></button>
+        <button id="btnShuffle" class="icon-btn dark music-only" title="Shuffle" hidden><span data-icon="shuffle"></span></button>
+        <button id="btnRepeat" class="icon-btn dark music-only" title="Repeat: off" hidden><span data-icon="repeat"></span><span class="repeat-one" id="repeatOne" hidden>1</span></button>
+        <span class="time" id="timeText">0:00 / 0:00</span>
+        <span class="badge sleep-badge" id="sleepBadge" hidden title="Sleep timer"></span>
+        <span class="badge" id="convertBadge" hidden title="This file is converted while it plays so this browser can play it">Converting</span>
+        <span class="spacer"></span>
+        <button id="btnLyrics" class="icon-btn dark music-only" title="Lyrics" hidden><span data-icon="mic"></span></button>
+        <button id="btnQueue" class="icon-btn dark music-only" title="Queue" hidden><span data-icon="list"></span></button>
+        <select id="qualitySelect" class="select-dropdown dark" title="Quality" hidden>
+          <option value="0">Original quality</option>
+          <option value="1080">1080p</option>
+          <option value="720">720p</option>
+          <option value="480">480p (saves data)</option>
+        </select>
+        <select id="audioSelect" class="select-dropdown dark" title="Audio track" hidden></select>
+        <select id="subsSelect" class="select-dropdown dark" title="Subtitles" hidden></select>
+        <button id="btnSubStyle" class="icon-btn dark" title="Subtitle size and style" hidden><span data-icon="type"></span></button>
+        <button id="btnFindSubs" class="icon-btn dark" title="Find subtitles online" hidden><span data-icon="cc-search"></span></button>
+        <input type="range" id="volume" class="volume" min="0" max="1" step="0.05" value="1" aria-label="Volume">
+        <button id="btnMore" class="icon-btn dark" title="Speed, sleep timer, picture-in-picture" aria-haspopup="true"><span data-icon="more"></span></button>
+        <button id="btnFullscreen" class="icon-btn dark" title="Full screen (F)"><span data-icon="maximize"></span></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Play on TV: device picker -->
+  <div id="tvPicker" class="modal" hidden>
+    <div class="modal-card">
+      <h3 id="tvPickerTitle">Play on TV</h3>
+      <p id="tvPickerStatus" class="meta"></p>
+      <div id="tvList" class="tv-list"></div>
+      <label class="check" id="tvConvertRow"><input type="checkbox" id="tvConvert"> Convert while playing <span class="meta" id="tvConvertHint">(for TVs that can't play this file)</span></label>
+      <label class="field" id="tvQualityRow">Quality
+        <select id="tvQuality" class="select-dropdown">
+          <option value="0">Original</option>
+          <option value="1080">1080p</option>
+          <option value="720">720p</option>
+          <option value="480">480p (slow Wi-Fi)</option>
+        </select>
+      </label>
+      <div class="modal-actions">
+        <button id="btnTvRefresh" class="btn btn-secondary">Search again</button>
+        <button id="btnTvCancel" class="btn btn-secondary">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Share link -->
+  <div id="shareModal" class="modal" hidden>
+    <div class="modal-card">
+      <h3 id="shareTitle">Share</h3>
+      <p class="meta">Anyone with the link can open this without an account, until it expires. Folders are shared with everything inside.</p>
+      <label class="field">Link works for
+        <select id="shareHours" class="select-dropdown">
+          <option value="1">1 hour</option>
+          <option value="24" selected>1 day</option>
+          <option value="168">1 week</option>
+          <option value="720">30 days</option>
+        </select>
+      </label>
+      <div id="shareResult" class="share-result" hidden>
+        <input id="shareUrl" type="text" readonly>
+        <button id="btnShareCopy" class="btn btn-primary" type="button"><span data-icon="copy"></span> Copy</button>
+      </div>
+      <p class="meta" id="shareNote"></p>
+      <div id="shareList" class="share-list"></div>
+      <div class="modal-actions">
+        <button id="btnShareCreate" class="btn btn-primary">Create link</button>
+        <button id="btnShareClose" class="btn btn-secondary">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add to playlist -->
+  <div id="playlistModal" class="modal" hidden>
+    <div class="modal-card">
+      <h3 id="playlistModalTitle">Add to playlist</h3>
+      <div id="playlistChoices" class="tv-list"></div>
+      <div class="inline-form">
+        <input id="newPlaylistName" type="text" placeholder="New playlist name" maxlength="80">
+        <button id="btnNewPlaylist" class="btn btn-primary" type="button">Create</button>
+      </div>
+      <div class="modal-actions"><button id="btnPlaylistClose" class="btn btn-secondary">Close</button></div>
+    </div>
+  </div>
+
+  <!-- Find subtitles -->
+  <div id="subsModal" class="modal" hidden>
+    <div class="modal-card">
+      <h3>Find subtitles</h3>
+      <p class="meta" id="subsStatus"></p>
+      <div id="subsResults" class="tv-list"></div>
+      <div class="modal-actions"><button id="btnSubsClose" class="btn btn-secondary">Close</button></div>
+    </div>
+  </div>
+
+  <!-- Subtitle style -->
+  <div id="subStyleModal" class="modal" hidden>
+    <div class="modal-card">
+      <h3>Subtitle style</h3>
+      <label class="field">Size
+        <select id="subSize" class="select-dropdown">
+          <option value="0.8">Small</option><option value="1.1">Medium</option><option value="1.5">Large</option><option value="2">Extra large</option>
+        </select>
+      </label>
+      <label class="field">Color
+        <select id="subColor" class="select-dropdown">
+          <option value="#ffffff">White</option><option value="#ffeb3b">Yellow</option><option value="#7dd3fc">Light blue</option>
+        </select>
+      </label>
+      <label class="field">Background
+        <select id="subBack" class="select-dropdown">
+          <option value="0">None (outlined text)</option><option value="0.6">See-through</option><option value="1">Solid black</option>
+        </select>
+      </label>
+      <div class="sub-preview"><span id="subPreview">This is how subtitles will look.</span></div>
+      <div class="modal-actions"><button id="btnSubStyleClose" class="btn btn-primary">Done</button></div>
+    </div>
+  </div>
+
+  <!-- Movie details -->
+  <div id="infoModal" class="modal" hidden>
+    <div class="modal-card info-card">
+      <div class="info-layout">
+        <div class="info-poster" id="infoPoster"></div>
+        <div class="info-text">
+          <h3 id="infoTitle"></h3>
+          <div class="meta" id="infoMeta"></div>
+          <p id="infoOverview"></p>
+          <div class="info-actions" id="infoActions"></div>
+        </div>
+      </div>
+      <div class="modal-actions"><button id="btnInfoClose" class="btn btn-secondary">Close</button></div>
+    </div>
+  </div>
+
+  <!-- Play on TV: remote -->
+  <div id="tvRemote" class="tv-remote" hidden>
+    <div class="tv-info"><span data-icon="tv"></span><div><div class="tv-title" id="tvTitle"></div><div class="meta" id="tvState"></div></div></div>
+    <input type="range" id="tvSeek" class="seek" min="0" max="1000" value="0" aria-label="Seek on TV">
+    <div class="tv-buttons">
+      <button id="btnTvBack" class="icon-btn" title="Back 30 s"><span data-icon="rewind"></span></button>
+      <button id="btnTvPlay" class="icon-btn" title="Play / pause"><span data-icon="pause-solid"></span></button>
+      <button id="btnTvFwd" class="icon-btn" title="Forward 30 s"><span data-icon="fast-forward"></span></button>
+      <button id="btnTvStop" class="icon-btn" title="Stop"><span data-icon="square"></span></button>
+      <input type="range" id="tvVolume" class="volume" min="0" max="100" step="1" aria-label="TV volume">
+    </div>
+  </div>
+</body>
+</html>

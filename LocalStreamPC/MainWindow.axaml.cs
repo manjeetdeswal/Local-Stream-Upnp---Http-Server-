@@ -1,1714 +1,754 @@
-﻿using Avalonia.Controls;
-using Avalonia.Interactivity;
-using Avalonia.Media.Imaging;
-using Avalonia.Platform;
-using Avalonia.Platform.Storage; // For Cross-platform folder picking
-using Avalonia.Threading; // For UI Thread updates
-using System;
-using System.Collections.Generic;
-using System.Collections.ObjectModel;
-using System.IO;
-using System.IO.Compression;
+﻿using System;
 using System.Linq;
-using System.Net;
-using System.Net.Http;
-using System.Net.Sockets;
-using System.Runtime.InteropServices; // To detect OS (Windows vs Linux)
-using System.Text;
-using System.Text.Json;
-using System.Threading;
 using System.Threading.Tasks;
-using System.Xml.Linq;
-using TagLib; // For Audio Metadata
-using Xabe.FFmpeg;
-using File = System.IO.File; // For Video Snapshots
-
-// Note: You still need the "System.Drawing.Common" and "Microsoft.Win32.Registry" NuGet packages 
-// installed for the specific Windows logic to work, but the code guards against crashes on Linux.
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.Input;
+using Avalonia.Interactivity;
+using Avalonia.Media;
+using Avalonia.Platform;
+using Avalonia.Platform.Storage;
+using Avalonia.Styling;
+using LocalStreamPC.Models;
+using LocalStreamPC.Services;
+using LocalStreamPC.ViewModels;
 
 namespace LocalStreamPC
 {
+    /// <summary>
+    /// View only: forwards clicks to <see cref="MainViewModel"/> and handles purely visual things
+    /// (theme, dialogs, clipboard, folder picker, tray). All logic lives in the ViewModel and services.
+    /// </summary>
     public partial class MainWindow : Window
     {
-        private HttpListener _httpListener;
-        private CancellationTokenSource _serverTokenSource;
-        private string _sharedPath => Config.SharedFolders.Count > 0
-                               ? Config.SharedFolders[0]
-                               : AppDomain.CurrentDomain.BaseDirectory;
-        private bool _isServerRunning = false;
-        private const int PORT = 8080;
-        private static readonly string UDN = "uuid:" + Guid.NewGuid().ToString();
-        private string _localIp;
-        // Limit FFmpeg to 1 active process to prevent server freeze
-        private static readonly SemaphoreSlim _thumbLock = new SemaphoreSlim(1, 1);
-        // --- SETTINGS ---
-        public static AppConfig Config { get; private set; }
-        private string _configPath = "config.json";
+        private static readonly double[] GridWidths = { 140, 180, 240, 320, 450 };
+        private readonly MainViewModel _vm;
+        private UpdateInfo? _update;
+        private bool _exitRequested;
+        private bool _initialising = true;
 
-        public ObservableCollection<UpnpDevice> DiscoveredDevices { get; set; } = new ObservableCollection<UpnpDevice>();
-
-        public MainWindow()
+        public static readonly StyledProperty<double> GridItemWidthProperty =
+            AvaloniaProperty.Register<MainWindow, double>(nameof(GridItemWidth), 180.0);
+        public double GridItemWidth
         {
+            get => GetValue(GridItemWidthProperty);
+            set { SetValue(GridItemWidthProperty, value); GridItemHeight = value / 1.777; } // keep 16:9
+        }
+
+        public static readonly StyledProperty<double> GridItemHeightProperty =
+            AvaloniaProperty.Register<MainWindow, double>(nameof(GridItemHeight), 101.0);
+        public double GridItemHeight
+        {
+            get => GetValue(GridItemHeightProperty);
+            set => SetValue(GridItemHeightProperty, value);
+        }
+
+        /// <summary>For the XAML designer/previewer only.</summary>
+        public MainWindow() : this(App.CreateViewModel()) { }
+
+        public MainWindow(MainViewModel vm)
+        {
+            _vm = vm;
+            DataContext = vm;
             InitializeComponent();
-            LoadConfig();
-            Xabe.FFmpeg.FFmpeg.SetExecutablesPath(AppDomain.CurrentDomain.BaseDirectory);
 
-            string os = "win";
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux)) os = "linux";
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) os = "mac";
-
-            // 2. Define Executable Names
-            string ffmpegName = os == "win" ? "ffmpeg.exe" : "ffmpeg";
-            string ffprobeName = os == "win" ? "ffprobe.exe" : "ffprobe";
-
-            // 3. Set Path
-            string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-            string ffmpegPath = Path.Combine(baseDir, ffmpegName);
-
-            if (System.IO.File.Exists(ffmpegPath))
-            {
-                // Tell Xabe where to look
-                Xabe.FFmpeg.FFmpeg.SetExecutablesPath(baseDir);
-
-                // On Linux/Mac, we must grant Execute permissions programmatically 
-                // because unzipping often removes them.
-                if (os != "win")
-                {
-                    try
-                    {
-                        System.Diagnostics.Process.Start("chmod", $"+x \"{Path.Combine(baseDir, ffmpegName)}\"");
-                        System.Diagnostics.Process.Start("chmod", $"+x \"{Path.Combine(baseDir, ffprobeName)}\"");
-                    }
-                    catch { /* Ignore if chmod fails */ }
-                }
-            }
-
-
-            // 1. Initialize ListBox
-            ListDevices.ItemsSource = DiscoveredDevices;
-            ListDevices.DoubleTapped += ListDevices_DoubleTapped;
-
-            // 2. Setup Server
-            _localIp = GetLocalIpAddress();
-            Log($"App initialized. Local IP: {_localIp}");
-            Xabe.FFmpeg.FFmpeg.SetExecutablesPath(AppDomain.CurrentDomain.BaseDirectory);
-            // 3. Create Tray Icon via Code (Fixes XAML Error)
+            LoadSettingsIntoForm();
+            CmbGridSize.SelectedIndex = Math.Clamp(vm.Config.GridSizeIndex, 0, GridWidths.Length - 1);
+            GridItemWidth = GridWidths[CmbGridSize.SelectedIndex];
+            ApplyTheme(vm.Config.IsDarkMode);
             CreateTrayIcon();
 
-            CleanThumbnailCache();
-
-            // 4. Check Startup Args
-            string[] args = Environment.GetCommandLineArgs();
-            if (args.Contains("-minimized") && Config.MinimizeToTray)
+            if (Environment.GetCommandLineArgs().Contains("-minimized") && vm.Config.MinimizeToTray)
             {
-                this.WindowState = WindowState.Minimized;
-                this.Hide();
+                WindowState = WindowState.Minimized;
+                ShowInTaskbar = false;
             }
 
-            Closing += Window_Closing;
-        }
-
-        // ===========================
-        //       UI EVENTS
-        // ===========================
-
-
-
-
-
-        private void CleanThumbnailCache()
-        {
-            // Run in background so startup isn't slowed down
-            Task.Run(() =>
+            // Seek when the user lets go of the slider, not on every pixel while dragging.
+            SliderCastSeek.AddHandler(PointerPressedEvent, (_, _) => _vm.Cast.IsUserSeeking = true, RoutingStrategies.Tunnel, handledEventsToo: true);
+            SliderCastSeek.AddHandler(PointerReleasedEvent, async (_, _) =>
             {
-                try
-                {
-                    string cacheDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Cache");
-                    if (!Directory.Exists(cacheDir)) return;
+                await _vm.Cast.SeekAsync(SliderCastSeek.Value);
+                _vm.Cast.IsUserSeeking = false;
+            }, RoutingStrategies.Tunnel | RoutingStrategies.Bubble, handledEventsToo: true);
 
-                    DirectoryInfo dir = new DirectoryInfo(cacheDir);
-                    FileInfo[] files = dir.GetFiles();
+            ApplyTabOrder();
+            vm.TabOrderChanged += ApplyTabOrder;
+            GoToTab(vm.StartTab);
 
-                    // 1. Delete files older than 7 days
-                    foreach (var file in files)
-                    {
-                        if (DateTime.Now - file.LastWriteTime > TimeSpan.FromDays(7))
-                        {
-                            try { file.Delete(); } catch { }
-                        }
-                    }
-
-                    // 2. Refresh list and check size limit (e.g., 500 MB)
-                    files = dir.GetFiles(); // Re-fetch after deletions
-                    long totalSize = files.Sum(f => f.Length);
-                    long limitBytes = 500 * 1024 * 1024; // 500 MB
-
-                    if (totalSize > limitBytes)
-                    {
-                        // Delete oldest accessed files first until we are under the limit
-                        var sortedFiles = files.OrderBy(f => f.LastAccessTime).ToList();
-                        foreach (var file in sortedFiles)
-                        {
-                            try
-                            {
-                                file.Delete();
-                                totalSize -= file.Length;
-                                if (totalSize < limitBytes) break; // Done
-                            }
-                            catch { }
-                        }
-                    }
-
-                    // Log($"🧹 Cache cleaned. Current size: {totalSize / 1024 / 1024} MB");
-                }
-                catch (Exception ex)
-                {
-                    Log($"⚠️ Cache Cleanup Error: {ex.Message}");
-                }
-            });
+            BtnConfirmYes.Click += (_, _) => FinishConfirm(true);
+            BtnConfirmNo.Click += (_, _) => FinishConfirm(false);
+            TxtVersion.Text = "v" + UpdateService.CurrentVersionText;
+            Closing += Window_Closing;
+            Loaded += MainWindow_Loaded;
+            _initialising = false;
         }
+
+        private async void MainWindow_Loaded(object? sender, RoutedEventArgs e)
+        {
+            if (WindowState == WindowState.Minimized && !ShowInTaskbar) Hide();
+
+            if (_vm.Config.AutoStartServer && _vm.SharedFolders.Count > 0)
+            {
+                _vm.Log("Auto-starting server...");
+                await ToggleServerAsync();
+            }
+            if (_vm.Config.CastReceiverEnabled) await _vm.Cast.SetReceivingAsync(true);
+            await CheckForUpdatesAsync(isStartup: true);
+        }
+
+        // ================================================================ navigation
+
+        private void Nav_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is RadioButton { Tag: string tag }) GoToTab(tag);
+        }
+
+        /// <summary>Opens a sidebar tab and ticks its button.</summary>
+        private void GoToTab(string tag)
+        {
+            foreach (var b in NavPanel.Children.OfType<RadioButton>())
+                b.IsChecked = (string?)b.Tag == tag;
+            switch (tag)
+            {
+                case "TabLibrary": _vm.OpenLibrary(); break;
+                case "TabSettings": _vm.CurrentTab = AppTab.Settings; LoadSettingsIntoForm(); break;
+                case "TabHistory": _vm.CurrentTab = AppTab.History; break;
+                default: _vm.CurrentTab = AppTab.Server; break;
+            }
+        }
+
+        /// <summary>Puts the sidebar buttons in the order chosen in Settings.</summary>
+        private void ApplyTabOrder()
+        {
+            var buttons = NavPanel.Children.OfType<RadioButton>().Where(b => b.Tag is string).ToDictionary(b => (string)b.Tag!);
+            var order = _vm.TabOrder.Where(buttons.ContainsKey).ToList();
+            if (order.Count == NavPanel.Children.Count && order.Select((t, i) => (string?)NavPanel.Children[i].Tag == t).All(x => x)) return;
+            NavPanel.Children.Clear();
+            foreach (var tag in order) NavPanel.Children.Add(buttons[tag]);
+        }
+
+        private void BtnTabUp_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is Button { Tag: string tag }) _vm.MoveTab(tag, -1);
+        }
+
+        private void BtnTabDown_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is Button { Tag: string tag }) _vm.MoveTab(tag, +1);
+        }
+
+        protected override void OnPointerReleased(PointerReleasedEventArgs e)
+        {
+            base.OnPointerReleased(e);
+            if (e.InitialPressMouseButton == MouseButton.XButton1) // mouse "back" button
+            {
+                _vm.GoBack();
+                e.Handled = true;
+            }
+        }
+
+        // ================================================================ shared folders + server
+
+        private async void BtnAddFolder_Click(object? sender, RoutedEventArgs e)
+        {
+            var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+            {
+                Title = "Add Shared Folder",
+                AllowMultiple = true,
+            });
+            var paths = folders
+                .Select(f => f.TryGetLocalPath())
+                .Where(p => !string.IsNullOrEmpty(p))
+                .Cast<string>();
+            _vm.AddSharedFolders(paths);
+        }
+
+        private void BtnRemoveFolder_Click(object? sender, RoutedEventArgs e)
+        {
+            if (ListSharedFolders.SelectedItem is string path) _vm.RemoveSharedFolder(path);
+        }
+
+        private async void BtnToggleServer_Click(object? sender, RoutedEventArgs e) => await ToggleServerAsync();
+
+        private async Task ToggleServerAsync()
+        {
+            BtnToggleServer.IsEnabled = false;
+            try
+            {
+                if (_vm.IsServerRunning) await _vm.StopServerAsync();
+                else await _vm.StartServerAsync();
+            }
+            finally
+            {
+                BtnToggleServer.IsEnabled = true;
+                BtnToggleServer.Content = _vm.IsServerRunning ? "STOP SERVER" : "START SERVER";
+                BtnToggleServer.Background = _vm.IsServerRunning ? Brushes.Crimson : Brush.Parse("#10B981");
+            }
+        }
+
+        private async void BtnCopySpecificIp_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is not Button { Tag: string url } btn || Clipboard == null) return;
+            await Clipboard.SetTextAsync(url);
+            var old = btn.Content;
+            btn.Content = "Copied!";
+            btn.Background = Brushes.ForestGreen;
+            await Task.Delay(2000);
+            btn.Content = old;
+            btn.Background = Brush.Parse("#3B82F6");
+        }
+
+        private async void BtnCopyLogs_Click(object? sender, RoutedEventArgs e)
+        {
+            if (Clipboard != null && !string.IsNullOrEmpty(_vm.LogText))
+            {
+                await Clipboard.SetTextAsync(_vm.LogText);
+                _vm.Log("Logs copied to clipboard.");
+            }
+        }
+
+        // ================================================================ cast receiver
+
+        private async void SwCastReceiver_Click(object? sender, RoutedEventArgs e)
+        {
+            bool want = SwCastReceiver.IsChecked == true;
+            bool on = await _vm.Cast.SetReceivingAsync(want);
+            SwCastReceiver.SetCurrentValue(ToggleButton.IsCheckedProperty, on); // snap back if it failed
+        }
+
+        private async void BtnCastPlayPause_Click(object? sender, RoutedEventArgs e) => await _vm.Cast.PlayPauseAsync();
+        private async void BtnCastStop_Click(object? sender, RoutedEventArgs e) => await _vm.Cast.StopAsync();
+        private async void BtnCastNext_Click(object? sender, RoutedEventArgs e) => await _vm.Cast.NextAsync();
+        private async void BtnCastPrevious_Click(object? sender, RoutedEventArgs e) => await _vm.Cast.PreviousAsync();
+        private async void BtnCastFullscreen_Click(object? sender, RoutedEventArgs e) => await _vm.Cast.ToggleFullscreenAsync();
+
+        // ================================================================ discovery + remote browsing
+
+        private async void BtnScan_Click(object? sender, RoutedEventArgs e) => await ScanAsync();
+
+        private async Task ScanAsync()
+        {
+            BtnScan.Content = "Scanning...";
+            BtnScan.IsEnabled = false;
+            await _vm.ScanAsync();
+            BtnScan.Content = "🔄 Refresh Network";
+            BtnScan.IsEnabled = true;
+        }
+
+        private void BtnConnectServer_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is Button { Tag: UpnpDevice device }) _vm.Connect(device);
+        }
+
+        private void ListDevices_DoubleTapped(object? sender, TappedEventArgs e)
+        {
+            if (ListDevices.SelectedItem is UpnpDevice device) _vm.Connect(device);
+        }
+
+        private void ListRemoteFiles_DoubleTapped2(object? sender, TappedEventArgs e)
+        {
+            if (sender is ListBox { SelectedItem: RemoteItem item }) _vm.OpenItem(item);
+        }
+
+        private void BtnBackToLibrary_Click(object? sender, RoutedEventArgs e) => _vm.OpenLibrary();
+
+        private async void BtnStartFromList_Click(object? sender, RoutedEventArgs e)
+        {
+            if (_vm.SharedFolders.Count == 0) { GoToTab("TabServer"); return; }
+            await ToggleServerAsync();
+        }
+
+        /// <summary>The server button above the library: this PC, the other servers found, "All servers…".</summary>
+        private void BtnSwitchServer_Click(object? sender, RoutedEventArgs e)
+        {
+            var menu = new MenuFlyout { Placement = PlacementMode.BottomEdgeAlignedLeft };
+            foreach (var d in _vm.SwitchableServers)
+            {
+                var device = d;
+                bool current = d.IsThisPc ? _vm.BrowsingName == "This PC" : _vm.BrowsingName == d.FriendlyName;
+                var item = new MenuItem { Header = (current ? "✓  " : "     ") + (d.IsThisPc ? "This PC (my library)" : d.FriendlyName) };
+                item.Click += (_, _) => { if (!current) _vm.Connect(device); };
+                menu.Items.Add(item);
+            }
+            menu.Items.Add(new Separator());
+            var all = new MenuItem { Header = "     All servers on the network…" };
+            all.Click += (_, _) => _vm.ShowServerList();
+            menu.Items.Add(all);
+            menu.ShowAt(BtnSwitchServer);
+            if (_vm.DiscoveredDevices.All(x => x.IsThisPc) && !_vm.IsScanning) _ = _vm.ScanAsync(); // fill the menu for next time
+        }
+
+        private void BtnBreadcrumb_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is Button { Tag: string id }) _vm.NavigateToBreadcrumb(id);
+        }
+
+        private void BtnSeeAllHistory_Click(object? sender, RoutedEventArgs e) => _vm.ShowAllHistory();
+        private void BtnSeeAllRandom_Click(object? sender, RoutedEventArgs e) => _vm.ShowAllRecommendations();
+        private async void BtnPlayAll_Click(object? sender, RoutedEventArgs e) => await _vm.PlayCurrentFolderAsync();
+
+        private void CtxMenuPlay_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is MenuItem { DataContext: RemoteItem item }) _vm.Play(new[] { item });
+        }
+
+        private async void CtxMenuPlayOnTv_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is MenuItem { DataContext: RemoteItem item }) await _vm.Tv.OpenPickerAsync(item);
+        }
+
+        // ================================================================ Play on TV
+
+        private async void BtnPickTv_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is Button { Tag: RendererDevice device }) await _vm.Tv.PlayOnAsync(device);
+        }
+
+        private async void BtnTvRescan_Click(object? sender, RoutedEventArgs e) => await _vm.Tv.ScanAsync(force: true);
+        private void BtnTvPickerClose_Click(object? sender, RoutedEventArgs e) => _vm.Tv.ClosePicker();
+
+        private async void BtnTvPlayPause_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is Button { Tag: TvSessionRow row }) await _vm.Tv.ControlAsync(row.DeviceId, row.IsPlaying ? "pause" : "play");
+        }
+        // ---------------------------------------------------------------- streams, share links, history
+
+        private void BtnStopStream_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is Button { Tag: StreamRow row }) _vm.Streams.Stop(row);
+        }
+
+        private async void BtnCopyShare_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is not Button { Tag: ShareRow row } btn || Clipboard == null) return;
+            await Clipboard.SetTextAsync(row.Url);
+            btn.Content = "Copied!";
+            await Task.Delay(1500);
+            btn.Content = "Copy link";
+        }
+
+        private async void BtnRevokeShare_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is not Button { Tag: ShareRow row }) return;
+            if (await ConfirmAsync($"Stop the share link for \"{row.Name}\"? People who have it won't be able to open it any more.", "Stop link"))
+                _vm.Shares.Revoke(row);
+        }
+
+        private async void BtnClearHistory_Click(object? sender, RoutedEventArgs e)
+        {
+            if (await ConfirmAsync("Clear the whole history? This can't be undone.", "Clear")) _vm.History.Clear();
+        }
+
+        private void BtnRescanLibrary_Click(object? sender, RoutedEventArgs e) => _vm.Library.Rescan();
+
+        private async void BtnExcludeFolder_Click(object? sender, RoutedEventArgs e)
+        {
+            var start = _vm.SharedFolders.FirstOrDefault() is string first ? await StorageProvider.TryGetFolderFromPathAsync(first) : null;
+            var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = "Folder to leave out of the library", AllowMultiple = true, SuggestedStartLocation = start });
+            string? error = null;
+            foreach (var f in folders)
+                if (f.TryGetLocalPath() is string path) error = _vm.Library.Exclude(path) ?? error;
+            TxtLibraryError.Text = error ?? "";
+            TxtLibraryError.IsVisible = error != null;
+        }
+
+        private void BtnIncludeFolder_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is Button { Tag: string path }) _vm.Library.Include(path);
+        }
+
+        private void BtnOpenTailscale_Click(object? sender, RoutedEventArgs e) => OpenInBrowser("https://tailscale.com/download");
+        private void BtnOpenTmdb_Click(object? sender, RoutedEventArgs e) => OpenInBrowser("https://www.themoviedb.org/settings/api");
+        private void BtnOpenOsub_Click(object? sender, RoutedEventArgs e) => OpenInBrowser("https://www.opensubtitles.com/en/consumers");
+
+        private async void BtnBrowseCert_Click(object? sender, RoutedEventArgs e)
+        {
+            var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+            {
+                Title = "Choose the HTTPS certificate",
+                AllowMultiple = false,
+                FileTypeFilter = new[] { new FilePickerFileType("Certificates") { Patterns = new[] { "*.pfx", "*.p12", "*.crt", "*.pem", "*.cer" } } },
+            });
+            if (files.Count > 0 && files[0].TryGetLocalPath() is string path) TxtCertPath.Text = path;
+        }
+
+        private async void BtnTvStop_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is Button { Tag: TvSessionRow row }) await _vm.Tv.ControlAsync(row.DeviceId, "stop");
+        }
+        private async void BtnTvBack_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is Button { Tag: TvSessionRow row }) await _vm.Tv.ControlAsync(row.DeviceId, "seek", Math.Max(0, row.Position - 30));
+        }
+        private async void BtnTvForward_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is Button { Tag: TvSessionRow row }) await _vm.Tv.ControlAsync(row.DeviceId, "seek", Math.Min(row.Duration - 5, row.Position + 30));
+        }
+
+        private TaskCompletionSource<bool>? _confirm;
+
+        /// <summary>A yes/no question shown over the window.</summary>
+        private Task<bool> ConfirmAsync(string message, string yesText)
+        {
+            _confirm?.TrySetResult(false);
+            var confirm = _confirm = new TaskCompletionSource<bool>();
+            TxtConfirmMessage.Text = message;
+            BtnConfirmYes.Content = yesText;
+            ConfirmOverlay.IsVisible = true;
+            return confirm.Task;
+        }
+
+        private void FinishConfirm(bool result)
+        {
+            ConfirmOverlay.IsVisible = false;
+            _confirm?.TrySetResult(result);
+            _confirm = null;
+        }
+
+        private void CtxMenuRemoveHistory_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is MenuItem { DataContext: RemoteItem item }) _vm.RemoveFromHistory(item);
+        }
+
+        private void CmbGridSize_SelectionChanged(object? sender, SelectionChangedEventArgs e)
+        {
+            if (CmbGridSize == null || CmbGridSize.SelectedIndex < 0) return;
+            GridItemWidth = GridWidths[Math.Min(CmbGridSize.SelectedIndex, GridWidths.Length - 1)];
+            if (!_initialising) _vm.SaveGridSize(CmbGridSize.SelectedIndex);
+        }
+
+        // ================================================================ settings
+
+        private void LoadSettingsIntoForm()
+        {
+            var c = _vm.Config;
+            TxtPort.Text = c.Port.ToString();
+            ChkRunAtStartup.IsChecked = c.RunAtStartup;
+            ChkMinimizeToTray.IsChecked = c.MinimizeToTray;
+            ChkAutoStartServer.IsChecked = c.AutoStartServer;
+            ChkEnableAuth.IsChecked = c.EnableAuth;
+            ChkAllowDeletion.IsChecked = c.AllowDeletion;
+            ChkAllowDlna.IsChecked = c.AllowDlnaWithoutLogin;
+            ChkCastFullscreen.IsChecked = c.CastFullscreen;
+            ChkBuiltInPlayer.IsChecked = c.UseBuiltInPlayer;
+            TxtCastPort.Text = c.CastPort.ToString();
+            TxtVlcPath.Text = c.VlcPath ?? "";
+            ChkKeepAwake.IsChecked = c.KeepAwakeWhileStreaming;
+            ChkCastResume.IsChecked = c.CastResume;
+            TxtSlideshowSeconds.Text = c.SlideshowSeconds.ToString();
+            ChkHardwareEncoding.IsChecked = c.UseHardwareEncoding;
+            TxtSpeedLimit.Text = c.StreamSpeedLimitMbps.ToString();
+            ChkEnableHttps.IsChecked = c.EnableHttps;
+            TxtHttpsPort.Text = c.HttpsPort.ToString();
+            TxtCertPath.Text = c.HttpsCertPath ?? "";
+            TxtKeyPath.Text = c.HttpsKeyPath ?? "";
+            TxtCertPassword.Text = c.HttpsCertPassword ?? "";
+            TxtTmdbKey.Text = c.TmdbApiKey ?? "";
+            TxtOsubKey.Text = c.OpenSubtitlesApiKey ?? "";
+            TxtSubLanguages.Text = c.SubtitleLanguages;
+            CmbSubScale.SelectedIndex = c.CastSubtitleScale switch { <= 80 => 0, <= 115 => 1, <= 160 => 2, _ => 3 };
+            string? tailscale = NetworkHelper.GetTailscaleAddress();
+            TxtTailscaleState.Text = tailscale != null ? $"Tailscale is connected on this PC: http://{tailscale}:{c.Port}/" : "";
+            TxtTailscaleState.IsVisible = tailscale != null;
+            _ = _vm.RefreshEncoderTextAsync();
+            TxtSettingsError.IsVisible = false;
+            _vm.Accounts.CancelEdit();
+            _vm.Accounts.Reload();
+        }
+
+        private void BtnSaveSettings_Click(object? sender, RoutedEventArgs e)
+        {
+            string? error = _vm.SaveSettings(new SettingsInput(
+                TxtPort.Text ?? "",
+                ChkRunAtStartup.IsChecked == true,
+                ChkMinimizeToTray.IsChecked == true,
+                ChkAutoStartServer.IsChecked == true,
+                ChkEnableAuth.IsChecked == true,
+                ChkAllowDeletion.IsChecked == true,
+                ChkAllowDlna.IsChecked == true,
+                TxtCastPort.Text ?? "",
+                ChkCastFullscreen.IsChecked == true,
+                TxtVlcPath.Text ?? "",
+                ChkBuiltInPlayer.IsChecked == true,
+                ChkKeepAwake.IsChecked == true,
+                ChkCastResume.IsChecked == true,
+                TxtSlideshowSeconds.Text ?? "")
+            {
+                UseHardwareEncoding = ChkHardwareEncoding.IsChecked == true,
+                SpeedLimitMbps = TxtSpeedLimit.Text ?? "0",
+                EnableHttps = ChkEnableHttps.IsChecked == true,
+                HttpsPort = TxtHttpsPort.Text ?? "",
+                HttpsCertPath = TxtCertPath.Text ?? "",
+                HttpsKeyPath = TxtKeyPath.Text ?? "",
+                HttpsCertPassword = TxtCertPassword.Text ?? "",
+                TmdbApiKey = TxtTmdbKey.Text ?? "",
+                OpenSubtitlesApiKey = TxtOsubKey.Text ?? "",
+                SubtitleLanguages = TxtSubLanguages.Text ?? "",
+                CastSubtitleScale = CmbSubScale.SelectedItem is ComboBoxItem { Tag: string scale } && int.TryParse(scale, out int sc) ? sc : 100,
+            });
+
+            TxtSettingsError.Text = error ?? "";
+            TxtSettingsError.IsVisible = error != null;
+        }
+
+        // ---------------------------------------------------------------- web accounts
+
+        private void BtnAddAccount_Click(object? sender, RoutedEventArgs e) => _vm.Accounts.BeginAdd();
+        private void BtnEditAccount_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is Button { Tag: string name }) _vm.Accounts.BeginEdit(name);
+        }
+        private void BtnCancelAccount_Click(object? sender, RoutedEventArgs e) => _vm.Accounts.CancelEdit();
+        private void BtnSaveAccount_Click(object? sender, RoutedEventArgs e) => _vm.Accounts.SaveEdit();
+        private void BtnToggleAccountPwd_Click(object? sender, RoutedEventArgs e) => TogglePasswordVisibility(TxtAccountPassword, sender);
+
+        private async void BtnRemoveAccount_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is not Button { Tag: string name }) return;
+            if (!await ConfirmAsync($"Remove the account \"{name}\"? It won't be able to log in any more.", "Remove")) return;
+            string? error = _vm.Accounts.Remove(name);
+            if (error != null) { TxtSettingsError.Text = error; TxtSettingsError.IsVisible = true; }
+        }
+
+        private static void TogglePasswordVisibility(TextBox box, object? sender)
+        {
+            if (sender is not Button { Content: TextBlock icon }) return;
+            bool hidden = box.PasswordChar == '*';
+            box.PasswordChar = hidden ? '\0' : '*';
+            icon.Text = hidden ? "🙈" : "👁️";
+        }
+
+        // ================================================================ theme
+
+        private void BtnToggleTheme_Click(object? sender, RoutedEventArgs e)
+        {
+            bool dark = !_vm.Config.IsDarkMode;
+            _vm.SetDarkMode(dark);
+            ApplyTheme(dark);
+        }
+
+        private void ApplyTheme(bool isDark)
+        {
+            RequestedThemeVariant = isDark ? ThemeVariant.Dark : ThemeVariant.Light;
+            ToolTip.SetTip(BtnToggleTheme, isDark ? "Switch to Light Mode" : "Switch to Dark Mode");
+            BtnToggleTheme.Background = Brush.Parse(isDark ? "#374151" : "#E5E7EB");
+            ThemeIconPath.Data = Geometry.Parse(isDark
+                ? "M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"
+                : "M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10z");
+            ThemeIconPath.Stroke = isDark ? Brushes.White : Brushes.Black;
+        }
+
+        // ================================================================ updates
+
+        private async void BtnCheckUpdate_Click(object? sender, RoutedEventArgs e)
+        {
+            BtnCheckUpdate.Content = "⏳";
+            BtnCheckUpdate.IsEnabled = false;
+            await CheckForUpdatesAsync(isStartup: false);
+        }
+
+        private async Task CheckForUpdatesAsync(bool isStartup)
+        {
+            try
+            {
+                var info = await _vm.CheckForUpdatesAsync();
+                if (info.IsUpdateAvailable)
+                {
+                    _update = info;
+                    _vm.Log($"Update available: {info.LatestVersion} (you have {info.CurrentVersion}).");
+                    bool skipped = isStartup && info.LatestVersion == _vm.Config.SkippedUpdate;
+                    bool oneClick = UpdateService.CanInstall(info);
+                    TxtUpdateMessage.Text = $"Version {info.LatestVersion} of LocalStream is available. You have {info.CurrentVersion}." +
+                        (oneClick ? "\n\nInstalling takes a few seconds: LocalStream closes, updates and starts again." : "\n\nDownload it from the release page.");
+                    TxtUpdateNotes.Text = info.Notes?.Trim() ?? "";
+                    UpdateNotesScroller.IsVisible = !string.IsNullOrWhiteSpace(info.Notes);
+                    BtnDownloadUpdate.Content = oneClick ? "Install update" : "Open release page";
+                    UpdateProgressPanel.IsVisible = false;
+                    UpdateButtons.IsVisible = true;
+                    if (!skipped) UpdateDialogOverlay.IsVisible = true;
+                    BtnCheckUpdate.Content = "⭐";
+                    ToolTip.SetTip(BtnCheckUpdate, "Update Available!");
+                    BtnCheckUpdate.Background = Brushes.ForestGreen;
+                }
+                else if (!isStartup)
+                {
+                    _vm.Log($"You are running the latest version ({info.CurrentVersion}).");
+                    BtnCheckUpdate.Content = "✔️";
+                    ToolTip.SetTip(BtnCheckUpdate, "Up to date");
+                }
+            }
+            catch (Exception ex)
+            {
+                _vm.Log($"Update check failed: {ex.Message}");
+                if (!isStartup)
+                {
+                    BtnCheckUpdate.Content = "❌";
+                    ToolTip.SetTip(BtnCheckUpdate, "Check Failed");
+                }
+            }
+
+            if (!isStartup)
+            {
+                await Task.Delay(4000);
+                if (BtnCheckUpdate.Content?.ToString() != "⭐")
+                {
+                    BtnCheckUpdate.Content = new Avalonia.Controls.Shapes.Path
+                    {
+                        Classes = { "icon" },
+                        Data = Geometry.Parse("M21 2v6h-6 M3 12a9 9 0 0 1 15-6.7L21 8 M3 22v-6h6 M21 12a9 9 0 0 1-15 6.7L3 16"),
+                        Width = 20, Height = 20, Stroke = Brushes.White,
+                    };
+                    ToolTip.SetTip(BtnCheckUpdate, "Check for Updates");
+                }
+                BtnCheckUpdate.IsEnabled = true;
+            }
+        }
+
+        private void BtnCloseUpdateDialog_Click(object? sender, RoutedEventArgs e) => UpdateDialogOverlay.IsVisible = false;
+
+        private void BtnSkipUpdate_Click(object? sender, RoutedEventArgs e)
+        {
+            if (_update != null) _vm.SkipUpdate(_update.LatestVersion);
+            UpdateDialogOverlay.IsVisible = false;
+        }
+
+        private async void BtnDownloadUpdate_Click(object? sender, RoutedEventArgs e)
+        {
+            var info = _update;
+            if (info == null) return;
+            if (!UpdateService.CanInstall(info))
+            {
+                OpenInBrowser(info.ReleaseUrl);
+                UpdateDialogOverlay.IsVisible = false;
+                return;
+            }
+
+            UpdateButtons.IsVisible = false;
+            UpdateProgressPanel.IsVisible = true;
+            TxtUpdateProgress.Text = "Downloading…";
+            try
+            {
+                var progress = new Progress<double>(p =>
+                {
+                    UpdateProgress.Value = p;
+                    TxtUpdateProgress.Text = $"Downloading… {p:P0}";
+                });
+                string installer = await _vm.DownloadUpdateAsync(info, progress);
+                TxtUpdateProgress.Text = "Installing. LocalStream will start again in a moment.";
+                _vm.Log($"Installing LocalStream {info.LatestVersion}…");
+                UpdateService.RunInstaller(installer);
+                await Task.Delay(500);
+                _exitRequested = true;
+                Close(); // the installer waits for us to close
+            }
+            catch (Exception ex)
+            {
+                _vm.Log($"Update failed: {ex.Message}");
+                TxtUpdateProgress.Text = $"The update couldn't be installed ({ex.Message}). You can download it from the release page instead.";
+                BtnDownloadUpdate.Content = "Open release page";
+                _update = info with { InstallerUrl = null };
+                UpdateButtons.IsVisible = true;
+            }
+        }
+
+        private void OpenInBrowser(string url)
+        {
+            try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo { FileName = url, UseShellExecute = true }); }
+            catch (Exception ex) { _vm.Log($"Failed to open the browser: {ex.Message}"); }
+        }
+
+        // ================================================================ tray + closing
+
+        private NativeMenuItem? _trayNowPlaying, _trayPlayPause, _trayNext, _trayStop, _trayTvStop;
+        private TrayIcon? _tray;
 
         private void CreateTrayIcon()
         {
             try
             {
-                var trayIcon = new TrayIcon
+                var open = new NativeMenuItem("Open Dashboard");
+                open.Click += (_, _) => ShowFromTray();
+                var exit = new NativeMenuItem("Exit Server");
+                exit.Click += (_, _) => { _exitRequested = true; Close(); };
+
+                // Controls for whatever is being cast to this PC (and TVs this app plays on).
+                _trayNowPlaying = new NativeMenuItem("") { IsEnabled = false, IsVisible = false };
+                _trayPlayPause = new NativeMenuItem("Pause") { IsVisible = false };
+                _trayPlayPause.Click += async (_, _) => await _vm.Cast.PlayPauseAsync();
+                _trayNext = new NativeMenuItem("Next") { IsVisible = false };
+                _trayNext.Click += async (_, _) => await _vm.Cast.NextAsync();
+                _trayStop = new NativeMenuItem("Stop") { IsVisible = false };
+                _trayStop.Click += async (_, _) => await _vm.Cast.StopAsync();
+                _trayTvStop = new NativeMenuItem("Stop playing on TVs") { IsVisible = false };
+                _trayTvStop.Click += async (_, _) => { foreach (var row in _vm.Tv.Sessions.ToList()) await _vm.Tv.ControlAsync(row.DeviceId, "stop"); };
+
+                _tray = new TrayIcon
                 {
-                    // This loads the icon from your project assets
                     Icon = new WindowIcon(AssetLoader.Open(new Uri("avares://LocalStreamPC/Assets/app-icon.ico"))),
                     ToolTipText = "LocalStream Server",
-                    IsVisible = true
+                    IsVisible = true,
+                    Menu = new NativeMenu { _trayNowPlaying, _trayPlayPause, _trayNext, _trayStop, _trayTvStop, new NativeMenuItemSeparator(), open, exit },
                 };
+                _tray.Clicked += (_, _) => ShowFromTray();
+                TrayIcon.SetIcons(Application.Current!, new TrayIcons { _tray });
 
-                // Create Menu
-                var menu = new NativeMenu();
-
-                var openItem = new NativeMenuItem("Open Dashboard");
-                openItem.Click += (s, e) => {
-                    this.Show();
-                    this.WindowState = WindowState.Normal;
-                    this.Activate();
+                _vm.Cast.PropertyChanged += (_, e) =>
+                {
+                    if (e.PropertyName is nameof(CastViewModel.HasMedia) or nameof(CastViewModel.IsPlaying) or nameof(CastViewModel.Title) or nameof(CastViewModel.CanNext))
+                        Avalonia.Threading.Dispatcher.UIThread.Post(UpdateTrayMenu);
                 };
-                menu.Add(openItem);
-
-                var exitItem = new NativeMenuItem("Exit Server");
-                exitItem.Click += (s, e) => {
-                    Config.MinimizeToTray = false;
-                    StopServer();
-                    this.Close();
-                };
-                menu.Add(exitItem);
-
-                trayIcon.Menu = menu;
+                _vm.Tv.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(TvViewModel.HasSessions)) Avalonia.Threading.Dispatcher.UIThread.Post(UpdateTrayMenu); };
             }
             catch (Exception ex)
             {
-                Log("Error creating tray icon: " + ex.Message);
-            }
-        }
-        private async void BtnAddFolder_Click(object sender, RoutedEventArgs e)
-        {
-            var topLevel = TopLevel.GetTopLevel(this);
-            if (topLevel == null) return;
-
-            var folders = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
-            {
-                Title = "Add Shared Folder",
-                AllowMultiple = true
-            });
-
-            foreach (var folder in folders)
-            {
-                string path = folder.Path.IsAbsoluteUri ? folder.Path.LocalPath : folder.Path.OriginalString;
-                path = Uri.UnescapeDataString(path);
-
-                if (!Config.SharedFolders.Contains(path))
-                {
-                    Config.SharedFolders.Add(path);
-                    Log($"📂 Added: {path}");
-                }
-            }
-
-            // Refresh List UI
-            ListSharedFolders.ItemsSource = null;
-            ListSharedFolders.ItemsSource = Config.SharedFolders;
-            SaveConfig();
-        }
-
-        // 2. REMOVE FOLDER
-        private void BtnRemoveFolder_Click(object sender, RoutedEventArgs e)
-        {
-            if (ListSharedFolders.SelectedItem is string path)
-            {
-                Config.SharedFolders.Remove(path);
-                ListSharedFolders.ItemsSource = null;
-                ListSharedFolders.ItemsSource = Config.SharedFolders;
-                SaveConfig();
-                Log($"🗑️ Removed: {path}");
-            }
-        }
-       
-
-        private async void BtnScan_Click(object sender, RoutedEventArgs e)
-        {
-            DiscoveredDevices.Clear();
-            BtnScan.Content = "Scanning...";
-            BtnScan.IsEnabled = false;
-            await ScanForDevices();
-            BtnScan.Content = "Scan for Devices";
-            BtnScan.IsEnabled = true;
-        }
-
-        private void BtnCopyLogs_Click(object sender, RoutedEventArgs e)
-        {
-            if (!string.IsNullOrEmpty(TxtServerLogs.Text))
-            {
-                // Cross-platform Clipboard access
-                var topLevel = TopLevel.GetTopLevel(this);
-                topLevel?.Clipboard?.SetTextAsync(TxtServerLogs.Text);
-                Log("Logs copied to clipboard.");
+                _vm.Log("Error creating tray icon: " + ex.Message);
             }
         }
 
-        private void BtnSaveSettings_Click(object sender, RoutedEventArgs e)
+        private void UpdateTrayMenu()
         {
-            SaveConfig();
-            Log("Settings saved!");
+            if (_trayNowPlaying == null) return;
+            var c = _vm.Cast;
+            bool media = c.HasMedia;
+            string title = c.Title.Length > 48 ? c.Title[..47] + "…" : c.Title;
+            _trayNowPlaying.Header = media ? (c.IsPlaying ? "▶ " : "❚❚ ") + title : "";
+            _trayNowPlaying.IsVisible = media;
+            _trayPlayPause!.Header = c.IsPlaying ? "Pause" : "Play";
+            _trayPlayPause.IsVisible = media;
+            _trayNext!.IsVisible = media && c.CanNext;
+            _trayStop!.IsVisible = media;
+            _trayTvStop!.IsVisible = _vm.Tv.HasSessions;
+            if (_tray != null) _tray.ToolTipText = media ? $"LocalStream · {(c.IsPlaying ? "playing" : "paused")}: {title}" : "LocalStream Server";
         }
 
-        private void Nav_Click(object sender, RoutedEventArgs e)
+        private void ShowFromTray()
         {
-            if (sender is RadioButton btn && btn.Tag is string tag)
-            {
-                // Avalonia uses IsVisible instead of Visibility.Collapsed/Visible
-                TabServer.IsVisible = false;
-                TabScanner.IsVisible = false;
-                TabSettings.IsVisible = false;
-
-                if (tag == "TabServer") TabServer.IsVisible = true;
-                if (tag == "TabScanner") TabScanner.IsVisible = true;
-                if (tag == "TabSettings") TabSettings.IsVisible = true;
-            }
+            ShowInTaskbar = true;
+            Show();
+            WindowState = WindowState.Normal;
+            Activate();
         }
 
-        private void ListDevices_DoubleTapped(object sender, Avalonia.Input.TappedEventArgs e)
+        private bool _shutdownDone;
+
+        private async void Window_Closing(object? sender, WindowClosingEventArgs e)
         {
-            if (ListDevices.SelectedItem is UpnpDevice device)
+            if (!_exitRequested && _vm.Config.MinimizeToTray)
             {
-                if (string.IsNullOrEmpty(device.ContentDirectoryUrl))
-                {
-                    Log("This device does not support file browsing.");
-                    return;
-                }
-
-                // UNCOMMENT THIS NOW:
-                var browser = new RemoteBrowser(device.ContentDirectoryUrl, device.BaseUrl, device.FriendlyName);
-                browser.Show();
-
-                Log($"Opening browser for: {device.FriendlyName}");
-            }
-        }
-
-        // ===========================
-        //    WINDOW & TRAY LOGIC
-        // ===========================
-
-        private void Window_Closing(object sender, WindowClosingEventArgs e)
-        {
-            if (Config.MinimizeToTray)
-            {
-                e.Cancel = true; // Stop close
-                this.Hide();     // Hide window
-                // Note: Balloon tips aren't fully supported on all Linux distros in Avalonia yet, 
-                // but the logic would go here if using a specific library.
-            }
-        }
-
-        // These methods are hooked up in the XAML TrayIcon NativeMenu
-        public void TrayOpen_Click(object sender, EventArgs e)
-        {
-            this.Show();
-            this.WindowState = WindowState.Normal;
-            this.Activate();
-        }
-
-        public void TrayExit_Click(object sender, EventArgs e)
-        {
-            // Force close ignoring the minimize setting
-            Config.MinimizeToTray = false;
-            StopServer();
-            this.Close();
-        }
-
-        // ===========================
-        //    CROSS-PLATFORM STARTUP
-        // ===========================
-
-        private void SetStartup(bool enable)
-        {
-            try
-            {
-                // 1. WINDOWS LOGIC (Uses Registry)
-                if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-                {
-                    // Using Microsoft.Win32 explicitly here
-                    string runKey = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run";
-                    using (var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(runKey, true))
-                    {
-                        if (enable)
-                        {
-                            string path = $"\"{Environment.ProcessPath}\" -minimized";
-                            key.SetValue("LocalStreamPC", path);
-                            Log("Added to Windows Startup.");
-                        }
-                        else
-                        {
-                            key.DeleteValue("LocalStreamPC", false);
-                            Log("Removed from Windows Startup.");
-                        }
-                    }
-                }
-                // 2. LINUX LOGIC (Uses .desktop files)
-                else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-                {
-                    string autostartDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "autostart");
-                    if (!Directory.Exists(autostartDir)) Directory.CreateDirectory(autostartDir);
-
-                    string desktopFile = Path.Combine(autostartDir, "localstream.desktop");
-
-                    if (enable)
-                    {
-                        string content = $"[Desktop Entry]\nType=Application\nName=LocalStream\nExec={Environment.ProcessPath} -minimized\nTerminal=false\n";
-                        System.IO.File.WriteAllText(desktopFile, content);
-                        Log("Added to Linux Autostart.");
-                    }
-                    else
-                    {
-                        if (System.IO.File.Exists(desktopFile)) System.IO.File.Delete(desktopFile);
-                        Log("Removed from Linux Autostart.");
-                    }
-                }
-            }
-            catch (Exception ex) { Log("Startup Error: " + ex.Message); }
-        }
-
-        // ===========================
-        //    SERVER & CONFIG LOGIC
-        // ===========================
-
-        public class AppConfig
-        {
-            public List<string> SharedFolders { get; set; } = new List<string>();
-            public int Port { get; set; } = 8080;
-            public bool RunAtStartup { get; set; } = false;
-            public bool MinimizeToTray { get; set; } = false;
-            public bool AutoStartServer { get; set; } = false;
-            public bool IsDarkMode { get; set; } = true;
-        }
-
-        // 1. UPDATE LOAD CONFIG
-        private void LoadConfig()
-        {
-            if (System.IO.File.Exists(_configPath))
-            {
-                try
-                {
-                    string json = System.IO.File.ReadAllText(_configPath);
-                    Config = JsonSerializer.Deserialize<AppConfig>(json) ?? new AppConfig();
-                }
-                catch { Config = new AppConfig(); }
-            }
-            else Config = new AppConfig();
-
-            // Ensure List is never null to prevent crashes
-            // Ensure list exists FIRST
-            if (Config.SharedFolders == null) Config.SharedFolders = new List<string>();
-
-            // THEN bind it
-            ListSharedFolders.ItemsSource = null;
-            ListSharedFolders.ItemsSource = Config.SharedFolders;
-
-            TxtPort.Text = Config.Port.ToString();
-            ChkRunAtStartup.IsChecked = Config.RunAtStartup;
-            ChkMinimizeToTray.IsChecked = Config.MinimizeToTray;
-            ChkAutoStartServer.IsChecked = Config.AutoStartServer;
-            ApplyTheme(Config.IsDarkMode);
-
-            // Auto-Start Logic
-            if (Config.AutoStartServer && Config.SharedFolders.Count > 0)
-            {
-                Log("🚀 Auto-starting Server...");
-                BtnToggleServer_Click(null, null);
-            }
-        }
-
-
-
-        private void BtnToggleTheme_Click(object sender, RoutedEventArgs e)
-        {
-            // Toggle the boolean
-            Config.IsDarkMode = !Config.IsDarkMode;
-
-            // Apply visual change
-            ApplyTheme(Config.IsDarkMode);
-
-            // Save immediately so it persists
-            SaveConfig();
-        }
-
-        private void ApplyTheme(bool isDark)
-        {
-            if (isDark)
-            {
-                RequestedThemeVariant = Avalonia.Styling.ThemeVariant.Dark;
-                BtnToggleTheme.Content = "🌙 Dark Mode";
-
-                // FIXED: Use 'Brush.Parse' (singular), not 'Brushes.Parse'
-                BtnToggleTheme.Background = Avalonia.Media.Brush.Parse("#374151");
-                BtnToggleTheme.Foreground = Avalonia.Media.Brushes.White;
-            }
-            else
-            {
-                RequestedThemeVariant = Avalonia.Styling.ThemeVariant.Light;
-                BtnToggleTheme.Content = "☀️ Light Mode";
-
-                // FIXED: Use 'Brush.Parse' (singular)
-                BtnToggleTheme.Background = Avalonia.Media.Brush.Parse("#E5E7EB");
-                BtnToggleTheme.Foreground = Avalonia.Media.Brushes.Black;
-            }
-        }
-
-
-        // 4. TOGGLE SERVER (Updated Check)
-        private async void BtnToggleServer_Click(object sender, RoutedEventArgs e)
-        {
-            if (_isServerRunning)
-            {
-                StopServer();
-                BtnToggleServer.Content = "Start Server";
-                BtnToggleServer.Background = Avalonia.Media.Brushes.ForestGreen;
-                _isServerRunning = false;
-            }
-            else
-            {
-                // Fix: Check List count instead of TxtFolderPath
-                if (Config.SharedFolders.Count == 0)
-                {
-                    Log("⚠️ Please add at least one folder first.");
-                    return;
-                }
-
-                _localIp = GetLocalIpAddress();
-                BtnToggleServer.Content = "Stop Server";
-                BtnToggleServer.Background = Avalonia.Media.Brushes.Crimson;
-                _isServerRunning = true;
-                _serverTokenSource = new CancellationTokenSource();
-
-                try
-                {
-                    await Task.WhenAll(
-                        StartHttpServer(_serverTokenSource.Token),
-                        StartSsdpServer(_serverTokenSource.Token)
-                    );
-                }
-                catch (OperationCanceledException) { }
-            }
-        }
-
-        private void SaveConfig()
-        {
-            // 1. FOLDERS: No need to save manually here. 
-            // The Add/Remove buttons already updated the Config.SharedFolders list.
-
-            // 2. OTHER SETTINGS
-            if (int.TryParse(TxtPort.Text, out int p)) Config.Port = p;
-            Config.RunAtStartup = ChkRunAtStartup.IsChecked == true;
-            Config.MinimizeToTray = ChkMinimizeToTray.IsChecked == true;
-            Config.AutoStartServer = ChkAutoStartServer.IsChecked == true;
-
-            // 3. WRITE TO FILE
-            try
-            {
-                string json = JsonSerializer.Serialize(Config);
-                System.IO.File.WriteAllText(_configPath, json);
-            }
-            catch (Exception ex) { Log("Error saving settings: " + ex.Message); }
-
-            SetStartup(Config.RunAtStartup);
-        }
-
-        // ===========================
-        //    HTTP SERVER LOGIC
-        // ===========================
-
-        private async Task StartHttpServer(CancellationToken token)
-        {
-            _httpListener = new HttpListener();
-            _httpListener.Prefixes.Add($"http://*:{Config.Port}/");
-
-            try
-            {
-                _httpListener.Start();
-                Log($"** HTTP Server active at http://{_localIp}:{Config.Port}/");
-            }
-            catch (HttpListenerException ex)
-            {
-                Log($"** Error starting HTTP: {ex.Message}");
-                StopServer();
+                e.Cancel = true;
+                Hide();
                 return;
             }
+            if (_shutdownDone) return;
 
-            try
-            {
-                while (!token.IsCancellationRequested)
-                {
-                    try
-                    {
-                        // This waits for a request. If we stop the server, this line throws an error.
-                        var context = await _httpListener.GetContextAsync();
-                        _ = Task.Run(() => HandleHttpRequest(context));
-                    }
-                    catch (HttpListenerException)
-                    {
-                        // Error 995: IO Aborted (Happens naturally when stopping). Ignore it.
-                        break;
-                    }
-                    catch (ObjectDisposedException)
-                    {
-                        // Listener was closed. Ignore it.
-                        break;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Log($"⚠️ Server Loop Error: {ex.Message}");
-            }
+            // Stop the server cleanly (sends SSDP byebye, closes connections), then close for real.
+            e.Cancel = true;
+            await _vm.ShutdownAsync();
+            _shutdownDone = true;
+            _exitRequested = true;
+            Close();
         }
-
-        private void HandleHttpRequest(HttpListenerContext context)
-        {
-            string rawUrl = context.Request.Url.AbsolutePath;
-            string method = context.Request.HttpMethod;
-
-            try
-            {
-                if (rawUrl == "/")
-                {
-                    string relativePath = context.Request.QueryString["path"] ?? "";
-                    ServeWebBrowser(context, relativePath);
-                }
-                else if (rawUrl == "/upload" && method == "POST") HandleFileUpload(context);
-                else if (rawUrl == "/zip") ServeZipDownload(context);
-                else if (rawUrl == "/description.xml") ServeDeviceDescription(context);
-                else if (rawUrl == "/scpd/ContentDirectory.xml") ServeServiceDescription(context);
-                else if (rawUrl == "/control/ContentDirectory" && method == "POST") HandleSoapBrowse(context);
-
-                // ✅ NEW: Thumbnail HandlerHandler
-                else if (rawUrl.StartsWith("/thumb/")) ServeThumbnail(context, rawUrl);
-
-                else if (rawUrl.StartsWith("/file/")) ServeMediaFile(context, rawUrl);
-                else
-                {
-                    context.Response.StatusCode = 404;
-                    context.Response.Close();
-                }
-            }
-            catch (Exception ex)
-            {
-                Log($"Error serving {rawUrl}: {ex.Message}");
-                try { context.Response.StatusCode = 500; context.Response.Close(); } catch { }
-            }
-        }
-
-        private async void ServeThumbnail(HttpListenerContext context, string path)
-        {
-            string fullPath = "";
-            try
-            {
-                // 1. Decode Path
-                string base64Param = path.Substring(7); // Removes "/thumb/"
-                fullPath = Encoding.UTF8.GetString(Convert.FromBase64String(base64Param));
-
-                if (!System.IO.File.Exists(fullPath))
-                {
-                    Log($"❌ Thumb 404: File not found {fullPath}");
-                    context.Response.StatusCode = 404;
-                    context.Response.Close();
-                    return;
-                }
-
-                // 2. Check Cache
-                string cacheDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Cache");
-                if (!Directory.Exists(cacheDir)) Directory.CreateDirectory(cacheDir);
-
-                string fileHash = Convert.ToBase64String(Encoding.UTF8.GetBytes(fullPath)).Replace("/", "_").Replace("+", "-");
-                string cachedThumbPath = Path.Combine(cacheDir, fileHash + ".jpg");
-
-                if (System.IO.File.Exists(cachedThumbPath))
-                {
-                    byte[] cachedBytes = await System.IO.File.ReadAllBytesAsync(cachedThumbPath);
-                    context.Response.ContentType = "image/jpeg";
-                    context.Response.ContentLength64 = cachedBytes.Length;
-                    context.Response.OutputStream.Write(cachedBytes, 0, cachedBytes.Length);
-                    context.Response.Close();
-                    return;
-                }
-
-                // 3. Generate New Thumbnail
-                string ext = Path.GetExtension(fullPath).ToLower();
-                byte[] imageBytes = null;
-
-                // === IMAGES ===
-                if (new[] { ".jpg", ".jpeg", ".png", ".bmp", ".webp" }.Contains(ext))
-                {
-                    try
-                    {
-                        // Try resizing first
-                        using (var stream = System.IO.File.OpenRead(fullPath))
-                        {
-                            var bitmap = Avalonia.Media.Imaging.Bitmap.DecodeToWidth(stream, 200);
-                            using (var outStream = new MemoryStream())
-                            {
-                                bitmap.Save(outStream);
-                                imageBytes = outStream.ToArray();
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Log($"⚠️ Image Resize Failed (Sending Original): {ex.Message}");
-                        // Fallback: Just send the original file if resizing crashes
-                        imageBytes = await System.IO.File.ReadAllBytesAsync(fullPath);
-                    }
-                }
-                // === AUDIO ===
-                else if (new[] { ".mp3", ".flac", ".ogg", ".m4a" }.Contains(ext))
-                {
-                    try
-                    {
-                        var tfile = TagLib.File.Create(fullPath);
-                        if (tfile.Tag.Pictures.Length > 0)
-                        {
-                            imageBytes = tfile.Tag.Pictures[0].Data.Data;
-                        }
-                    }
-                    catch { /* No Album Art found or file locked */ }
-                }
-                // === VIDEO ===
-                else if (new[] { ".mp4", ".mkv", ".avi", ".mov", ".webm" }.Contains(ext))
-                {
-                    await _thumbLock.WaitAsync();
-                    try
-                    {
-                        string tempThumb = Path.Combine(Path.GetTempPath(), $"tmp_{Guid.NewGuid()}.jpg");
-                        // Take snapshot at 5 seconds
-                        var conversion = await FFmpeg.Conversions.FromSnippet.Snapshot(fullPath, tempThumb, TimeSpan.FromSeconds(5));
-                        await conversion.Start();
-
-                        if (System.IO.File.Exists(tempThumb))
-                        {
-                            // Resize the snapshot to save bandwidth
-                            using (var stream = System.IO.File.OpenRead(tempThumb))
-                            {
-                                var bitmap = Avalonia.Media.Imaging.Bitmap.DecodeToWidth(stream, 300);
-                                using (var outStream = new MemoryStream())
-                                {
-                                    bitmap.Save(outStream);
-                                    imageBytes = outStream.ToArray();
-                                }
-                            }
-                            System.IO.File.Delete(tempThumb);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Log($"❌ FFmpeg Error: {ex.Message}");
-                    }
-                    finally
-                    {
-                        _thumbLock.Release();
-                    }
-                }
-
-                // 4. Send Response
-                if (imageBytes != null)
-                {
-                    // Save to cache for next time
-                    try { await System.IO.File.WriteAllBytesAsync(cachedThumbPath, imageBytes); } catch { }
-
-                    context.Response.ContentType = "image/jpeg";
-                    context.Response.ContentLength64 = imageBytes.Length;
-                    context.Response.OutputStream.Write(imageBytes, 0, imageBytes.Length);
-                }
-                else
-                {
-                    // No thumbnail available -> 404 (Client shows default icon)
-                    context.Response.StatusCode = 404;
-                }
-            }
-            catch (Exception ex)
-            {
-                Log($"🔥 Critical Thumb Error: {ex.Message}");
-                context.Response.StatusCode = 500;
-            }
-            finally
-            {
-                context.Response.Close();
-            }
-        }
-
-        // IMPORTANT: Avalonia UI Thread Helper
-        private void Log(string message)
-        {
-            // Avalonia requires Dispatcher.UIThread instead of just Dispatcher
-            Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                TxtServerLogs.Text += $"[{DateTime.Now:HH:mm:ss}] {message}\n";
-                // TxtServerLogs.CaretIndex = TxtServerLogs.Text.Length; // Scroll to end equivalent
-            });
-        }
-
-        private void StopServer()
-        {
-            // 1. Tell the loops to stop
-            if (_serverTokenSource != null && !_serverTokenSource.IsCancellationRequested)
-            {
-                _serverTokenSource.Cancel();
-            }
-
-            // 2. Stop HTTP Listener
-            if (_httpListener != null)
-            {
-                try
-                {
-                    if (_httpListener.IsListening)
-                    {
-                        _httpListener.Stop(); // This triggers the exception in the loop above
-                    }
-                    _httpListener.Close();
-                }
-                catch { /* Ignore errors during shutdown */ }
-                finally
-                {
-                    _httpListener = null;
-                }
-            }
-
-            Log("🛑 Server stopped.");
-        }
-        // ===========================
-        //    NETWORKING HELPERS
-        // ===========================
-
-        private string GetLocalIpAddress()
-        {
-            try
-            {
-                using (Socket socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, 0))
-                {
-                    socket.Connect("8.8.8.8", 65530);
-                    IPEndPoint endPoint = socket.LocalEndPoint as IPEndPoint;
-                    return endPoint.Address.ToString();
-                }
-            }
-            catch { return "127.0.0.1"; }
-
-        }
-
-        private void ServeWebBrowser(HttpListenerContext context, string pathParam)
-        {
-            // 1. Sanitize
-            if (pathParam.Contains("..")) pathParam = "";
-
-            // 2. VIRTUAL ROOT: If path is empty, show Shared Folders
-            if (string.IsNullOrEmpty(pathParam))
-            {
-                var sb = new StringBuilder();
-                sb.Append("<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>");
-                sb.Append("<title>LocalStream Root</title>");
-                // Reuse styles
-                sb.Append("<style>body{font-family:'Segoe UI',sans-serif;background:#f0f2f5;padding:20px} .item{background:white;padding:15px;margin-bottom:10px;border-radius:8px;display:flex;align-items:center;gap:15px;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,0.1)} .item:hover{background:#fff} .icon{font-size:1.5em} a{text-decoration:none;color:#333;font-weight:600;flex-grow:1}</style>");
-                sb.Append("</head><body>");
-
-                sb.Append("<h1>📡 Shared Libraries</h1>");
-
-                foreach (var folder in Config.SharedFolders)
-                {
-                    if (!Directory.Exists(folder)) continue;
-                    var info = new DirectoryInfo(folder);
-                    string link = $"/?path={WebUtility.UrlEncode(folder)}";
-
-                    sb.Append($"<div class='item' onclick=\"window.location='{link}'\">");
-                    sb.Append("<span class='icon'>💽</span>");
-                    sb.Append($"<a href='{link}'>{info.Name}</a>");
-                    sb.Append($"<span style='color:#888;font-size:0.8em'>{folder}</span>");
-                    sb.Append("</div>");
-                }
-
-                if (Config.SharedFolders.Count == 0) sb.Append("<p>No folders shared. Add them in the Server App.</p>");
-
-                sb.Append("</body></html>");
-
-                byte[] b = Encoding.UTF8.GetBytes(sb.ToString());
-                context.Response.ContentType = "text/html; charset=utf-8";
-                context.Response.ContentLength64 = b.Length;
-                context.Response.OutputStream.Write(b, 0, b.Length);
-                context.Response.Close();
-                return;
-            }
-
-            // 3. NORMAL BROWSING
-            string currentPath = pathParam;
-            bool isAllowed = Config.SharedFolders.Any(root => currentPath.StartsWith(root, StringComparison.OrdinalIgnoreCase));
-
-            if (!isAllowed || !Directory.Exists(currentPath))
-            {
-                context.Response.StatusCode = 404;
-                context.Response.Close();
-                return;
-            }
-
-            var html = new StringBuilder();
-            html.Append("<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>");
-            html.Append($"<title>{new DirectoryInfo(currentPath).Name}</title>");
-            html.Append("<style>");
-
-            // CSS STYLES
-            html.Append("body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; margin: 0; padding: 20px; padding-bottom: 80px; }");
-            html.Append(".header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }");
-            html.Append("h1 { margin: 0; color: #333; font-size: 1.5rem; word-break: break-all; }");
-            html.Append(".btn { padding: 8px 15px; border: none; border-radius: 5px; cursor: pointer; font-weight: 500; text-decoration: none; color: white; display: inline-flex; align-items: center; justify-content: center; gap: 5px; }");
-            html.Append(".btn-primary { background: #007bff; } .btn-primary:hover { background: #0056b3; }");
-            html.Append(".btn-secondary { background: #6c757d; } .btn-secondary:hover { background: #545b62; }");
-            html.Append(".btn-success { background: #28a745; } .btn-success:hover { background: #218838; }");
-            html.Append(".container { display: flex; flex-direction: column; gap: 10px; }");
-            html.Append(".grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 15px; }");
-            html.Append(".item { background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); overflow: hidden; transition: transform 0.2s; position: relative; }");
-            html.Append(".item:hover { background: #f9f9f9; box-shadow: 0 4px 8px rgba(0,0,0,0.15); }");
-            html.Append(".checkbox { z-index: 10; cursor: pointer; }");
-
-            // View Specific Styles
-            html.Append(".list .item { display: flex; align-items: center; padding: 10px; gap: 15px; }");
-            html.Append(".list .preview-box { display: none !important; }");
-            html.Append(".list .icon { font-size: 1.5em; width: 40px; text-align: center; }");
-            html.Append(".list .details { flex-grow: 1; display: flex; align-items: center; justify-content: space-between; overflow: hidden; }");
-            html.Append(".list .actions { display: flex; gap: 5px; margin-left: 10px; }");
-
-            html.Append(".grid .item { display: flex; flex-direction: column; aspect-ratio: 3/4; }");
-            html.Append(".grid .list-only { display: none !important; }");
-            html.Append(".grid .checkbox { position: absolute; top: 8px; left: 8px; width: 20px; height: 20px; }");
-            html.Append(".grid .preview-box { flex-grow: 1; background: #eee; display: flex; justify-content: center; align-items: center; font-size: 3em; background-size: cover; background-position: center; }");
-            html.Append(".grid .details { padding: 10px; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid #eee; }");
-            html.Append(".grid .actions { display: flex; gap: 5px; margin-top: auto; }");
-            html.Append(".grid .actions .btn { flex: 1; }");
-
-            html.Append(".name { text-decoration: none; color: #333; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }");
-            html.Append(".meta { color: #888; font-size: 0.85em; }");
-            html.Append("</style>");
-
-            // JS SCRIPTS
-            html.Append("<script>");
-            html.Append("function toggleView() { var c = document.getElementById('container'); var isGrid = c.classList.contains('grid'); c.className = isGrid ? 'container list' : 'container grid'; localStorage.setItem('viewMode', isGrid ? 'list' : 'grid'); }");
-            html.Append("function updateSelection() { var count = document.querySelectorAll('.file-check:checked').length; var bar = document.getElementById('selectionBar'); bar.style.display = count > 0 ? 'flex' : 'none'; document.getElementById('selCount').innerText = count + ' selected'; }");
-            html.Append("function downloadSelected() { var checks = document.querySelectorAll('.file-check:checked'); var files = []; checks.forEach(c => files.push(c.value)); if(files.length===0) return; window.location = '/zip?path=" + WebUtility.UrlEncode(currentPath) + "&files=' + encodeURIComponent(files.join('|')); }");
-            html.Append("function downloadAll() { window.location = '/zip?path=" + WebUtility.UrlEncode(currentPath) + "'; }");
-            html.Append("function uploadFiles() { document.getElementById('fileInput').click(); }");
-            html.Append("function handleUpload(input) { if(input.files.length === 0) return; var formData = new FormData(); for(var i=0; i<input.files.length; i++) formData.append('files', input.files[i]); fetch('/upload?path=" + WebUtility.UrlEncode(currentPath) + "', {method:'POST', body:formData}).then(r => window.location.reload()).catch(e => alert('Upload failed')); }");
-            html.Append("window.onload = function() { var mode = localStorage.getItem('viewMode') || 'list'; document.getElementById('container').className = 'container ' + mode; };");
-            html.Append("</script></head><body>");
-
-            // HEADER
-            string folderName = new DirectoryInfo(currentPath).Name;
-            html.Append("<div class='header'>");
-            html.Append($"<h1>📂 {folderName}</h1>");
-            html.Append("<div style='display:flex; gap:10px'>");
-            html.Append("<input type='file' id='fileInput' multiple style='display:none' onchange='handleUpload(this)'>");
-            html.Append("<button class='btn btn-success' onclick='uploadFiles()'>⬆️ Upload</button>");
-            html.Append("<button class='btn btn-primary' onclick='downloadAll()'>📦 Zip</button>");
-            html.Append("<button class='btn btn-secondary' onclick='toggleView()'>👁 View</button>");
-            html.Append("</div></div>");
-
-            html.Append("<div id='container' class='container list'>");
-
-            // --- FIX: UP BUTTON (Now matches Folder layout) ---
-            string parent = Path.GetDirectoryName(currentPath);
-            bool parentIsAllowed = parent != null && Config.SharedFolders.Any(root => parent.StartsWith(root));
-            string upLink = parentIsAllowed ? $"/?path={WebUtility.UrlEncode(parent)}" : "/";
-
-            html.Append($"<div class='item' onclick=\"window.location='{upLink}'\">");
-            // Standard Structure: Preview Box + List Icon + Details
-            html.Append("<div class='preview-box'>⬆️</div>");
-            html.Append("<span class='list-only icon'>⬆️</span>");
-            html.Append("<div class='details'><div><a class='name'>..</a><span class='meta'>Go Up</span></div></div>");
-            html.Append("</div>");
-            // --------------------------------------------------
-
-            // SUB-FOLDERS
-            foreach (var dir in Directory.GetDirectories(currentPath))
-            {
-                var info = new DirectoryInfo(dir);
-                string link = $"/?path={WebUtility.UrlEncode(dir)}";
-
-                html.Append($"<div class='item' onclick=\"window.location='{link}'\">");
-                html.Append("<div class='preview-box'>📁</div><span class='list-only icon'>📁</span>");
-                html.Append($"<div class='details'><div><a class='name'>{info.Name}</a><span class='meta'>Folder</span></div></div>");
-                html.Append("</div>");
-            }
-
-            // FILES
-            foreach (var file in Directory.GetFiles(currentPath))
-            {
-                var info = new FileInfo(file);
-                string fullPathB64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(file));
-                string url = $"/file/{fullPathB64}";
-                string thumbUrl = $"/thumb/{fullPathB64}";
-                string icon = GetFileIcon(info.Extension);
-                bool isMedia = IsMediaFile(info.Name);
-                string bgStyle = isMedia ? $"style=\"background-image: url('{thumbUrl}');\"" : "";
-
-                html.Append("<div class='item'>");
-                html.Append($"<input type='checkbox' class='checkbox file-check' value='{WebUtility.UrlEncode(info.Name)}' onclick='event.stopPropagation(); updateSelection()'>");
-                html.Append($"<div class='preview-box' {bgStyle}>{(!isMedia ? icon : "")}</div>");
-                html.Append($"<span class='list-only icon'>{icon}</span>");
-                html.Append("<div class='details'>");
-                html.Append($"<div style='flex-grow:1; min-width:0;'><a href='{url}' target='_blank' class='name'>{info.Name}</a><span class='meta'>{FormatSize(info.Length)}</span></div>");
-                html.Append("<div class='actions'>");
-                html.Append($"<a href='{url}' target='_blank' class='btn btn-primary btn-action'>▶</a>");
-                html.Append($"<a href='{url}' download class='btn btn-secondary btn-action'>⬇</a>");
-                html.Append("</div></div></div>");
-            }
-
-            html.Append("</div>"); // End Container
-
-            // Selection Bar
-            html.Append("<div id='selectionBar' style='position:fixed; bottom:0; left:0; right:0; background:#333; color:white; padding:15px; display:none; justify-content:space-between; align-items:center; box-shadow:0 -2px 10px rgba(0,0,0,0.2);'>");
-            html.Append("<span id='selCount' style='font-weight:bold'>0 selected</span>");
-            html.Append("<button class='btn btn-success' onclick='downloadSelected()'>📦 Download Selected</button>");
-            html.Append("</div>");
-
-            html.Append("</body></html>");
-
-            byte[] buffer = Encoding.UTF8.GetBytes(html.ToString());
-            context.Response.ContentType = "text/html; charset=utf-8";
-            context.Response.ContentLength64 = buffer.Length;
-            context.Response.OutputStream.Write(buffer, 0, buffer.Length);
-            context.Response.Close();
-        }
-        // ================= UPLOAD HANDLER ================= //
-
-        private void HandleFileUpload(HttpListenerContext context)
-        {
-            try
-            {
-                // 1. Get the Absolute Path from the Browser
-                string pathParam = context.Request.QueryString["path"] ?? "";
-
-                // 2. Security: Validate Path
-                if (string.IsNullOrEmpty(pathParam) || pathParam.Contains(".."))
-                {
-                    Log("⚠️ Upload blocked: Invalid path.");
-                    context.Response.StatusCode = 400;
-                    context.Response.Close();
-                    return;
-                }
-
-                // 3. Security: Ensure the path is actually inside a Shared Folder
-                // This prevents people from uploading to C:\Windows or other unshared places
-                bool isAllowed = Config.SharedFolders.Any(root => pathParam.StartsWith(root, StringComparison.OrdinalIgnoreCase));
-
-                if (!isAllowed)
-                {
-                    Log($"⚠️ Upload blocked: '{pathParam}' is not a shared folder.");
-                    context.Response.StatusCode = 403; // Forbidden
-                    context.Response.Close();
-                    return;
-                }
-
-                string targetFolder = pathParam;
-
-                if (!Directory.Exists(targetFolder))
-                {
-                    context.Response.StatusCode = 404;
-                    context.Response.Close();
-                    return;
-                }
-
-                // 4. Handle Multipart Data
-                string contentType = context.Request.ContentType;
-                if (contentType != null && contentType.Contains("multipart/form-data"))
-                {
-                    // Extract Boundary
-                    string boundary = contentType.Split(new[] { "boundary=" }, StringSplitOptions.None)[1];
-                    // Remove quotes if present
-                    boundary = boundary.Trim('"');
-                    byte[] boundaryBytes = Encoding.ASCII.GetBytes("--" + boundary);
-
-                    using (var ms = new MemoryStream())
-                    {
-                        // Note: Copying entire stream to memory is fine for small files (images/songs).
-                        // For very large video uploads (>500MB), this might use too much RAM.
-                        context.Request.InputStream.CopyTo(ms);
-                        byte[] data = ms.ToArray();
-
-                        Log($"📥 Upload received ({FormatSize(data.Length)}). Processing...");
-
-                        // Find Filename
-                        // We peek at the first 2KB of headers to find the name
-                        string rawStr = Encoding.UTF8.GetString(data.Take(2000).ToArray());
-                        string filename = "Upload_" + DateTime.Now.Ticks + ".bin";
-
-                        if (rawStr.Contains("filename=\""))
-                        {
-                            int start = rawStr.IndexOf("filename=\"") + 10;
-                            int end = rawStr.IndexOf("\"", start);
-                            filename = rawStr.Substring(start, end - start);
-                        }
-
-                        // Locate Content Start (Double Newline: \r\n\r\n)
-                        int headerEnd = IndexOf(data, new byte[] { 13, 10, 13, 10 });
-
-                        if (headerEnd > 0)
-                        {
-                            int contentStart = headerEnd + 4;
-                            // Find end boundary (approximate)
-                            int contentEnd = data.Length - boundaryBytes.Length - 4;
-
-                            // 5. Save the File
-                            string savePath = Path.Combine(targetFolder, filename);
-
-                            // Prevent overwriting existing files
-                            if (File.Exists(savePath))
-                            {
-                                string nameNoExt = Path.GetFileNameWithoutExtension(filename);
-                                string ext = Path.GetExtension(filename);
-                                savePath = Path.Combine(targetFolder, $"{nameNoExt}_{DateTime.Now.Ticks}{ext}");
-                            }
-
-                            using (var fs = new FileStream(savePath, FileMode.Create))
-                            {
-                                // Calculate length carefully to avoid crash if boundary detection is slightly off
-                                int length = Math.Max(0, contentEnd - contentStart);
-                                if (length > 0)
-                                {
-                                    fs.Write(data, contentStart, length);
-                                    Log($"✅ Saved: {filename}");
-                                }
-                            }
-                        }
-                    }
-                    context.Response.StatusCode = 200;
-                }
-                else
-                {
-                    context.Response.StatusCode = 415; // Unsupported Media Type
-                }
-            }
-            catch (Exception ex)
-            {
-                Log($"🔥 Upload Error: {ex.Message}");
-                context.Response.StatusCode = 500;
-            }
-            finally
-            {
-                context.Response.Close();
-            }
-        }
-        private int IndexOf(byte[] src, byte[] pattern)
-        {
-            int max = src.Length - pattern.Length;
-            for (int i = 0; i <= max; i++)
-            {
-                if (src[i] != pattern[0]) continue;
-                bool match = true;
-                for (int j = 1; j < pattern.Length; j++)
-                {
-                    if (src[i + j] != pattern[j]) { match = false; break; }
-                }
-                if (match) return i;
-            }
-            return -1;
-        }
-
-        // ================= ZIP DOWNLOAD HANDLER ================= //
-
-        private void ServeZipDownload(HttpListenerContext context)
-        {
-            try
-            {
-                string pathParam = context.Request.QueryString["path"] ?? "";
-                if (string.IsNullOrEmpty(pathParam) || pathParam.Contains("..")) return;
-
-                // Security Check
-                if (!Config.SharedFolders.Any(root => pathParam.StartsWith(root, StringComparison.OrdinalIgnoreCase)))
-                {
-                    context.Response.StatusCode = 403; context.Response.Close(); return;
-                }
-
-                string sourceFolder = pathParam; // It is now the full path
-                string filesParam = context.Request.QueryString["files"];
-                string[] selectedFiles = string.IsNullOrEmpty(filesParam) ? null : WebUtility.UrlDecode(filesParam).Split('|');
-
-                context.Response.ContentType = "application/zip";
-                context.Response.AddHeader("Content-Disposition", $"attachment; filename=\"Download_{DateTime.Now.Ticks}.zip\"");
-
-                using (var zipArchive = new ZipArchive(context.Response.OutputStream, ZipArchiveMode.Create, true))
-                {
-                    var filesToZip = selectedFiles != null
-                        ? selectedFiles.Select(f => Path.Combine(sourceFolder, f)).Where(System.IO.File.Exists)
-                        : Directory.GetFiles(sourceFolder);
-
-                    foreach (var filePath in filesToZip)
-                    {
-                        zipArchive.CreateEntryFromFile(filePath, Path.GetFileName(filePath));
-                    }
-                }
-                context.Response.Close();
-            }
-            catch { context.Response.Close(); }
-        }
-
-        // ================= HELPERS & UPNP (Unchanged Logic) ================= //
-
-        private void ServeMediaFile(HttpListenerContext context, string path)
-        {
-            string base64Param = path.Substring(6);
-            string fullPath = "";
-
-            try { fullPath = Encoding.UTF8.GetString(Convert.FromBase64String(base64Param)); }
-            catch { context.Response.StatusCode = 404; context.Response.Close(); return; }
-
-            if (!Config.SharedFolders.Any(f => fullPath.StartsWith(f)) || !System.IO.File.Exists(fullPath))
-            {
-                context.Response.StatusCode = 404;
-                context.Response.Close();
-                return;
-            }
-
-            FileInfo fileInfo = new FileInfo(fullPath);
-            long fileSize = fileInfo.Length;
-            string mimeType = GetMimeType(fileInfo.Extension);
-
-            context.Response.ContentType = mimeType;
-
-            // --- ADD THIS LINE TO FIX VLC TITLES ---
-            // This tells VLC: "Don't use the URL, use this real filename instead"
-            context.Response.AddHeader("Content-Disposition", $"inline; filename=\"{fileInfo.Name}\"");
-            // ---------------------------------------
-
-            context.Response.AddHeader("transferMode.dlna.org", "Streaming");
-            context.Response.AddHeader("contentFeatures.dlna.org", "DLNA.ORG_OP=01;DLNA.ORG_FLAGS=01700000000000000000000000000000");
-            context.Response.AddHeader("Accept-Ranges", "bytes");
-
-            // ... (Keep the rest of the method exactly the same) ...
-            string rangeHeader = context.Request.Headers["Range"];
-            long start = 0, end = fileSize - 1;
-
-            if (rangeHeader != null)
-            {
-                context.Response.StatusCode = 206;
-                string[] ranges = rangeHeader.Replace("bytes=", "").Split('-');
-                start = long.Parse(ranges[0]);
-                if (ranges.Length > 1 && !string.IsNullOrEmpty(ranges[1])) end = long.Parse(ranges[1]);
-            }
-
-            long contentLength = end - start + 1;
-            context.Response.ContentLength64 = contentLength;
-            context.Response.AddHeader("Content-Range", $"bytes {start}-{end}/{fileSize}");
-
-            using (var fs = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read))
-            {
-                fs.Seek(start, SeekOrigin.Begin);
-                byte[] buffer = new byte[64 * 1024];
-                int bytesRead;
-                long bytesRemaining = contentLength;
-                try
-                {
-                    while (bytesRemaining > 0 && (bytesRead = fs.Read(buffer, 0, (int)Math.Min(buffer.Length, bytesRemaining))) > 0)
-                    {
-                        context.Response.OutputStream.Write(buffer, 0, bytesRead);
-                        bytesRemaining -= bytesRead;
-                    }
-                }
-                catch { }
-            }
-            context.Response.Close();
-            Log($"▶️ Served: {fileInfo.Name}");
-        }
-
-        private bool IsMediaFile(string filename)
-        {
-            string[] mediaExtensions = {
-        ".mp4", ".mkv", ".avi", ".mov", ".webm",".wmv", // Video
-        ".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac","mpga", // Audio
-        ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp" // Images
-    };
-
-            string ext = Path.GetExtension(filename).ToLower();
-            return mediaExtensions.Contains(ext);
-        }
-
-        private string GetFileIcon(string extension)
-        {
-            string ext = extension.ToLower();
-            if (new[] { ".mp4", ".mkv", ".avi", ".mov", ".webm" }.Contains(ext)) return "🎬";
-            if (new[] { ".mp3", ".wav", ".flac", ".ogg", ".m4a" }.Contains(ext)) return "🎵";
-            if (new[] { ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp" }.Contains(ext)) return "🖼️";
-            if (new[] { ".pdf", ".doc", ".docx", ".txt" }.Contains(ext)) return "📄";
-            if (new[] { ".zip", ".rar", ".7z" }.Contains(ext)) return "📦";
-            if (new[] { ".exe", ".msi", ".apk" }.Contains(ext)) return "💾";
-            return "📃";
-        }
-
-        private string GetMimeType(string extension)
-        {
-            return extension.ToLower() switch
-            {
-                ".mp4" => "video/mp4",
-                ".mkv" => "video/x-matroska",
-                ".avi" => "video/x-msvideo",
-                ".mov" => "video/quicktime",
-                ".webm" => "video/webm",
-                ".mp3" => "audio/mpeg",
-                ".wav" => "audio/wav",
-                ".flac" => "audio/flac",
-                ".ogg" => "audio/ogg",
-                ".m4a" => "audio/mp4",
-                ".jpg" => "image/jpeg",
-                ".jpeg" => "image/jpeg",
-                ".png" => "image/png",
-                ".gif" => "image/gif",
-                ".bmp" => "image/bmp",
-                ".webp" => "image/webp",
-                ".pdf" => "application/pdf",
-                ".txt" => "text/plain",
-                ".zip" => "application/zip",
-                ".html" => "text/html",
-                _ => "application/octet-stream"
-            };
-        }
-
-        private string FormatSize(long bytes)
-        {
-            string[] sizes = { "B", "KB", "MB", "GB", "TB" };
-            double len = bytes;
-            int order = 0;
-            while (len >= 1024 && order < sizes.Length - 1) { order++; len = len / 1024; }
-            return $"{len:0.##} {sizes[order]}";
-        }
-
-        // ================= UPNP HANDLERS ================= //
-
-        private void HandleSoapBrowse(HttpListenerContext context)
-        {
-            var sw = System.Diagnostics.Stopwatch.StartNew();
-            int matchCount = 0;
-
-            try
-            {
-                string requestBody;
-                using (var reader = new StreamReader(context.Request.InputStream)) requestBody = reader.ReadToEnd();
-
-                string objectId = "0";
-                if (requestBody.Contains("<ObjectID>"))
-                {
-                    int start = requestBody.IndexOf("<ObjectID>") + 10;
-                    int end = requestBody.IndexOf("</ObjectID>");
-                    objectId = requestBody.Substring(start, end - start);
-                }
-
-                bool isRecursive = requestBody.Contains("BrowseRecursive");
-                Log($"📂 Browse: ID '{objectId}'");
-
-                StringBuilder didl = new StringBuilder();
-                didl.Append("&lt;DIDL-Lite xmlns=&quot;urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/&quot; xmlns:dc=&quot;http://purl.org/dc/elements/1.1/&quot; xmlns:upnp=&quot;urn:schemas-upnp-org:metadata-1-0/upnp/&quot; xmlns:dlna=&quot;urn:schemas-dlna-org:metadata-1-0/&quot;&gt;");
-
-                if (objectId == "0")
-                {
-                    // === VIRTUAL ROOT: Loop through your SharedFolders List ===
-                    foreach (var folderPath in Config.SharedFolders)
-                    {
-                        if (!Directory.Exists(folderPath)) continue;
-
-                        var dirInfo = new DirectoryInfo(folderPath);
-                        // ID is the Base64 of the FULL PATH
-                        string id = Convert.ToBase64String(Encoding.UTF8.GetBytes(folderPath));
-                        string safeTitle = System.Security.SecurityElement.Escape(dirInfo.Name);
-
-                        didl.Append($"&lt;container id=&quot;{id}&quot; parentID=&quot;0&quot; restricted=&quot;1&quot; searchable=&quot;0&quot;&gt;");
-                        didl.Append($"&lt;dc:title&gt;{safeTitle}&lt;/dc:title&gt;");
-                        didl.Append($"&lt;upnp:class&gt;object.container.storageFolder&lt;/upnp:class&gt;");
-                        didl.Append($"&lt;/container&gt;");
-                        matchCount++;
-                    }
-                }
-                else
-                {
-                    // === PHYSICAL FOLDER: Decode the ID to get the real path ===
-                    string currentPath = "";
-                    try { byte[] data = Convert.FromBase64String(objectId); currentPath = Encoding.UTF8.GetString(data); } catch { }
-
-                    // Security: Only allow if it starts with one of your shared paths
-                    bool isAllowed = Config.SharedFolders.Any(allowed => currentPath.StartsWith(allowed));
-
-                    if (Directory.Exists(currentPath) && isAllowed)
-                    {
-                        if (isRecursive)
-                        {
-                            var allFiles = GetAllFilesRecursive(currentPath);
-                            foreach (var file in allFiles)
-                            {
-                                if (!IsMediaFile(file)) continue;
-                                AppendFileXml(didl, file, objectId, ref matchCount);
-                            }
-                        }
-                        else
-                        {
-                            foreach (var dir in Directory.GetDirectories(currentPath))
-                            {
-                                var dirInfo = new DirectoryInfo(dir);
-                                if ((dirInfo.Attributes & FileAttributes.Hidden) == FileAttributes.Hidden) continue;
-
-                                string id = Convert.ToBase64String(Encoding.UTF8.GetBytes(dir));
-                                string safeTitle = System.Security.SecurityElement.Escape(System.Security.SecurityElement.Escape(dirInfo.Name));
-
-                                didl.Append($"&lt;container id=&quot;{id}&quot; parentID=&quot;{objectId}&quot; restricted=&quot;1&quot; searchable=&quot;0&quot;&gt;");
-                                didl.Append($"&lt;dc:title&gt;{safeTitle}&lt;/dc:title&gt;");
-                                didl.Append($"&lt;upnp:class&gt;object.container.storageFolder&lt;/upnp:class&gt;");
-                                didl.Append($"&lt;/container&gt;");
-                                matchCount++;
-                            }
-
-                            foreach (var file in Directory.GetFiles(currentPath))
-                            {
-                                if (!IsMediaFile(file)) continue;
-                                AppendFileXml(didl, file, objectId, ref matchCount);
-                            }
-                        }
-                    }
-                }
-
-                didl.Append("&lt;/DIDL-Lite&gt;");
-
-                string soap = $@"<?xml version=""1.0"" encoding=""utf-8""?>
-<s:Envelope xmlns:s=""http://schemas.xmlsoap.org/soap/envelope/"" s:encodingStyle=""http://schemas.xmlsoap.org/soap/encoding/"">
-    <s:Body>
-        <u:BrowseResponse xmlns:u=""urn:schemas-upnp-org:service:ContentDirectory:1"">
-            <Result>{didl}</Result>
-            <NumberReturned>{matchCount}</NumberReturned>
-            <TotalMatches>{matchCount}</TotalMatches>
-            <UpdateID>1</UpdateID>
-        </u:BrowseResponse>
-    </s:Body>
-</s:Envelope>";
-
-                byte[] bytes = Encoding.UTF8.GetBytes(soap);
-                context.Response.ContentType = "text/xml; charset=\"utf-8\"";
-                context.Response.ContentLength64 = bytes.Length;
-                context.Response.OutputStream.Write(bytes, 0, bytes.Length);
-                context.Response.Close();
-            }
-            catch (Exception ex)
-            {
-                Log($"🔥 BROWSE ERROR: {ex.Message}");
-                context.Response.StatusCode = 500;
-                context.Response.Close();
-            }
-        }
-
-        // === HELPER METHODS (Paste these inside MainWindow class) ===
-
-        private List<string> GetAllFilesRecursive(string path)
-        {
-            var files = new List<string>();
-            try
-            {
-                files.AddRange(Directory.GetFiles(path));
-                foreach (var directory in Directory.GetDirectories(path))
-                {
-                    files.AddRange(GetAllFilesRecursive(directory));
-                }
-            }
-            catch { /* Ignore permission errors */ }
-            return files;
-        }
-
-        private void AppendFileXml(StringBuilder didl, string fullPath, string parentId, ref int matchCount)
-        {
-            try
-            {
-                var info = new FileInfo(fullPath);
-
-                // Encode the FULL PATH in the URL. 
-                // We use Base64 to make it safe for URLs (slash/space issues).
-                string pathEncoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(fullPath));
-
-                // Note the new URL structure: /file/{Base64Path}
-                string url = $"http://{_localIp}:{Config.Port}/file/{pathEncoded}";
-                string thumbUrl = $"http://{_localIp}:{Config.Port}/thumb/{pathEncoded}";
-
-                string mime = GetMimeType(info.Extension);
-                string id = pathEncoded; // ID is also the encoded path
-
-                string rawTitle = Path.GetFileNameWithoutExtension(info.Name);
-                string safeTitle = System.Security.SecurityElement.Escape(System.Security.SecurityElement.Escape(rawTitle));
-
-                string upnpClass = "object.item";
-                if (mime.StartsWith("video")) upnpClass = "object.item.videoItem";
-                else if (mime.StartsWith("audio")) upnpClass = "object.item.audioItem.musicTrack";
-                else if (mime.StartsWith("image")) upnpClass = "object.item.imageItem.photo";
-
-                didl.Append($"&lt;item id=&quot;{id}&quot; parentID=&quot;{parentId}&quot; restricted=&quot;1&quot;&gt;");
-                didl.Append($"&lt;dc:title&gt;{safeTitle}&lt;/dc:title&gt;");
-                didl.Append($"&lt;upnp:class&gt;{upnpClass}&lt;/upnp:class&gt;");
-
-                if (upnpClass.Contains("video") || upnpClass.Contains("audio") || upnpClass.Contains("image"))
-                {
-                    didl.Append($"&lt;upnp:albumArtURI&gt;{thumbUrl}&lt;/upnp:albumArtURI&gt;");
-                }
-
-                string dlnaFeatures = "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000";
-                didl.Append($"&lt;res protocolInfo=&quot;http-get:*:{mime}:{dlnaFeatures}&quot; size=&quot;{info.Length}&quot;&gt;{url}&lt;/res&gt;");
-
-                didl.Append("&lt;/item&gt;");
-                matchCount++;
-            }
-            catch { }
-        }
-
-
-
-
-
-
-
-        private void ServeDeviceDescription(HttpListenerContext context)
-        {
-            string xml = $@"<?xml version=""1.0""?><root xmlns=""urn:schemas-upnp-org:device-1-0""><specVersion><major>1</major><minor>0</minor></specVersion><device><deviceType>urn:schemas-upnp-org:device:MediaServer:1</deviceType><friendlyName>Local Stream PC ({Environment.MachineName})</friendlyName><manufacturer>LocalStream</manufacturer><modelName>Windows Server</modelName><UDN>{UDN}</UDN><serviceList><service><serviceType>urn:schemas-upnp-org:service:ContentDirectory:1</serviceType><serviceId>urn:upnp-org:serviceId:ContentDirectory</serviceId><controlURL>/control/ContentDirectory</controlURL><eventSubURL>/events/ContentDirectory</eventSubURL><SCPDURL>/scpd/ContentDirectory.xml</SCPDURL></service></serviceList></device></root>";
-            ReplyXml(context, xml);
-        }
-
-        private void ServeServiceDescription(HttpListenerContext context)
-        {
-            string xml = @"<?xml version=""1.0"" encoding=""utf-8""?><scpd xmlns=""urn:schemas-upnp-org:service-1-0""><specVersion><major>1</major><minor>0</minor></specVersion><actionList><action><name>Browse</name><argumentList><argument><name>ObjectID</name><direction>in</direction><relatedStateVariable>A_ARG_TYPE_ObjectID</relatedStateVariable></argument><argument><name>BrowseFlag</name><direction>in</direction><relatedStateVariable>A_ARG_TYPE_BrowseFlag</relatedStateVariable></argument><argument><name>Filter</name><direction>in</direction><relatedStateVariable>A_ARG_TYPE_Filter</relatedStateVariable></argument><argument><name>StartingIndex</name><direction>in</direction><relatedStateVariable>A_ARG_TYPE_Index</relatedStateVariable></argument><argument><name>RequestedCount</name><direction>in</direction><relatedStateVariable>A_ARG_TYPE_Count</relatedStateVariable></argument><argument><name>SortCriteria</name><direction>in</direction><relatedStateVariable>A_ARG_TYPE_SortCriteria</relatedStateVariable></argument><argument><name>Result</name><direction>out</direction><relatedStateVariable>A_ARG_TYPE_Result</relatedStateVariable></argument><argument><name>NumberReturned</name><direction>out</direction><relatedStateVariable>A_ARG_TYPE_Count</relatedStateVariable></argument><argument><name>TotalMatches</name><direction>out</direction><relatedStateVariable>A_ARG_TYPE_Count</relatedStateVariable></argument><argument><name>UpdateID</name><direction>out</direction><relatedStateVariable>A_ARG_TYPE_UpdateID</relatedStateVariable></argument></argumentList></action></actionList><serviceStateTable><stateVariable sendEvents=""no""><name>A_ARG_TYPE_ObjectID</name><dataType>string</dataType></stateVariable><stateVariable sendEvents=""no""><name>A_ARG_TYPE_Result</name><dataType>string</dataType></stateVariable><stateVariable sendEvents=""no""><name>A_ARG_TYPE_BrowseFlag</name><dataType>string</dataType></stateVariable><stateVariable sendEvents=""no""><name>A_ARG_TYPE_Filter</name><dataType>string</dataType></stateVariable><stateVariable sendEvents=""no""><name>A_ARG_TYPE_SortCriteria</name><dataType>string</dataType></stateVariable><stateVariable sendEvents=""no""><name>A_ARG_TYPE_Index</name><dataType>ui4</dataType></stateVariable><stateVariable sendEvents=""no""><name>A_ARG_TYPE_Count</name><dataType>ui4</dataType></stateVariable><stateVariable sendEvents=""no""><name>A_ARG_TYPE_UpdateID</name><dataType>ui4</dataType></stateVariable></serviceStateTable></scpd>";
-            ReplyXml(context, xml);
-        }
-
-        private void ReplyXml(HttpListenerContext context, string xml)
-        {
-            byte[] bytes = Encoding.UTF8.GetBytes(xml);
-            context.Response.ContentType = "text/xml";
-            context.Response.ContentLength64 = bytes.Length;
-            context.Response.OutputStream.Write(bytes, 0, bytes.Length);
-            context.Response.Close();
-        }
-
-        private async Task StartSsdpServer(CancellationToken token)
-        {
-            try
-            {
-                using (var client = new UdpClient())
-                {
-                    // LINUX FIX: Bind to 0.0.0.0 (Any) instead of specific IP
-                    // This allows Linux to pick up multicast packets from all interfaces
-                    var localEp = new IPEndPoint(IPAddress.Any, 1900);
-
-                    client.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-                    client.ExclusiveAddressUse = false;
-
-                    try
-                    {
-                        client.Client.Bind(localEp);
-
-                        // JOIN the group specifying the interface IP
-                        client.JoinMulticastGroup(IPAddress.Parse("239.255.255.250"), IPAddress.Parse(_localIp));
-
-                        Log("📡 SSDP Active (Upnp Server Enabled)");
-                    }
-                    catch (Exception bindEx)
-                    {
-                        Log($"⚠️ SSDP Bind Error: {bindEx.Message}");
-                        return;
-                    }
-
-                    // ... (Rest of the Receive Loop is the same) ...
-                    while (!token.IsCancellationRequested)
-                    {
-                        // Paste the existing loop here
-                        try
-                        {
-                            var result = await client.ReceiveAsync(token);
-                            string msg = Encoding.UTF8.GetString(result.Buffer);
-
-                            if (msg.Contains("M-SEARCH") && (msg.Contains("MediaServer") || msg.Contains("ssdp:all") || msg.Contains("upnp:rootdevice")))
-                            {
-                                // ... (Response logic remains the same) ...
-                                string response = $"HTTP/1.1 200 OK\r\n" +
-                                                  $"CACHE-CONTROL: max-age=1800\r\n" +
-                                                  $"DATE: {DateTime.Now:r}\r\n" +
-                                                  $"EXT:\r\n" +
-                                                  $"LOCATION: http://{_localIp}:{PORT}/description.xml\r\n" +
-                                                  $"SERVER: Linux UPnP/1.0\r\n" +
-                                                  $"ST: urn:schemas-upnp-org:device:MediaServer:1\r\n" +
-                                                  $"USN: {UDN}::urn:schemas-upnp-org:device:MediaServer:1\r\n\r\n";
-
-                                byte[] bytes = Encoding.UTF8.GetBytes(response);
-                                await client.SendAsync(bytes, bytes.Length, result.RemoteEndPoint);
-                            }
-                        }
-                        catch (OperationCanceledException) { break; }
-                        catch { }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Log($"❌ SSDP Critical Fail: {ex.Message}");
-            }
-        }
-
-        private async Task ScanForDevices()
-        {
-            // FIX 1: Find the correct local IP to bind to
-            IPEndPoint localEndPoint = new IPEndPoint(IPAddress.Parse(GetLocalIpAddress()), 0);
-
-            using (var client = new UdpClient(localEndPoint)) // Bind here
-            {
-                // FIX 2: Set TTL (Time To Live) to ensuring packet survives the router hop
-                client.Ttl = 4;
-
-                // Send M-SEARCH
-                string req = "M-SEARCH * HTTP/1.1\r\n" +
-                             "HOST: 239.255.255.250:1900\r\n" +
-                             "MAN: \"ssdp:discover\"\r\n" +
-                             "MX: 3\r\n" +
-                             "ST: ssdp:all\r\n\r\n";
-
-                byte[] data = Encoding.UTF8.GetBytes(req);
-                var endpoint = new IPEndPoint(IPAddress.Parse("239.255.255.250"), 1900);
-
-                try
-                {
-                    // Try sending multiple times
-                    for (int i = 0; i < 3; i++)
-                    {
-                        await client.SendAsync(data, data.Length, endpoint);
-                        await Task.Delay(100);
-                    }
-                }
-                catch (SocketException ex)
-                {
-                    Log($"⚠️ Discovery Network Error: {ex.Message}. Check firewall.");
-                    return;
-                }
-
-                var timeout = TimeSpan.FromSeconds(4);
-                var startTime = DateTime.Now;
-
-                while (DateTime.Now - startTime < timeout)
-                {
-                    try
-                    {
-                        if (client.Available > 0)
-                        {
-                            var result = await client.ReceiveAsync();
-                            string msg = Encoding.UTF8.GetString(result.Buffer);
-
-                            // Process full metadata
-                            _ = ProcessDiscoveryResponse(msg, result.RemoteEndPoint.Address.ToString());
-                        }
-                        else await Task.Delay(100);
-                    }
-                    catch { break; } // Stop loop on error
-                }
-            }
-        }
-        private async Task ProcessDiscoveryResponse(string msg, string ip)
-        {
-            try
-            {
-                // Extract Location Header
-                string location = msg.Split('\n')
-                    .FirstOrDefault(x => x.StartsWith("LOCATION:", StringComparison.OrdinalIgnoreCase))
-                    ?.Substring(9).Trim();
-
-                if (string.IsNullOrEmpty(location)) return;
-
-                // Check if we already have this IP (Basic de-duplication)
-                bool exists = false;
-
-                // FIX 1: Use Dispatcher.UIThread.Invoke
-                Dispatcher.UIThread.Invoke(() => exists = DiscoveredDevices.Any(d => d.IpAddress == ip));
-
-                if (exists) return;
-
-                // FETCH AND PARSE XML DESCRIPTION
-                using (var httpClient = new HttpClient())
-                {
-                    httpClient.Timeout = TimeSpan.FromSeconds(3);
-                    var xmlStr = await httpClient.GetStringAsync(location);
-                    var doc = XDocument.Parse(xmlStr);
-                    var ns = doc.Root.GetDefaultNamespace();
-
-                    string friendlyName = doc.Descendants(ns + "friendlyName").FirstOrDefault()?.Value ?? "Unknown";
-                    string manufacturer = doc.Descendants(ns + "manufacturer").FirstOrDefault()?.Value ?? "";
-
-                    // Find ContentDirectory service
-                    string contentDirUrl = "";
-                    var service = doc.Descendants(ns + "service")
-                        .FirstOrDefault(s => s.Element(ns + "serviceType")?.Value.Contains("ContentDirectory") == true);
-
-                    if (service != null)
-                    {
-                        contentDirUrl = service.Element(ns + "controlURL")?.Value;
-                    }
-
-                    // Calculate Base URL
-                    Uri locUri = new Uri(location);
-                    string baseUrl = $"{locUri.Scheme}://{locUri.Authority}";
-
-                    // FIX 2: Use Dispatcher.UIThread.Invoke
-                    Dispatcher.UIThread.Invoke(() =>
-                    {
-                        // Double check duplication before adding
-                        if (!DiscoveredDevices.Any(d => d.FriendlyName == friendlyName))
-                        {
-                            DiscoveredDevices.Add(new UpnpDevice
-                            {
-                                FriendlyName = friendlyName,
-                                IpAddress = ip,
-                                ServiceType = manufacturer,
-                                ContentDirectoryUrl = contentDirUrl,
-                                BaseUrl = baseUrl
-                            });
-                        }
-                    });
-                }
-            }
-            catch (Exception)
-            {
-                // Ignore errors
-            }
-        }
-
-
-
-        private bool IsAdministrator()
-        {
-            var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
-            var principal = new System.Security.Principal.WindowsPrincipal(identity);
-            return principal.IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
-        }
-
-        
-    }
-
-    public class UpnpDevice
-    {
-        public string FriendlyName { get; set; }
-        public string IpAddress { get; set; }
-        public string ServiceType { get; set; }
-        public string ContentDirectoryUrl { get; set; }
-        public string BaseUrl { get; set; }
     }
 }

@@ -1,39 +1,69 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
-    <Nullable>enable</Nullable>
-    <ApplicationManifest>app.manifest</ApplicationManifest>
-	 <ApplicationIcon>Assets\app-icon.ico</ApplicationIcon>
-    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
-  </PropertyGroup>
+<Project Sdk="Microsoft.NET.Sdk">
+	<PropertyGroup>
+		<OutputType>WinExe</OutputType>
+		<TargetFramework>net8.0</TargetFramework>
+		<Nullable>enable</Nullable>
+		<ApplicationManifest>app.manifest</ApplicationManifest>
+		<ApplicationIcon>Assets\app-icon.ico</ApplicationIcon>
+		<AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+		<!-- Windows media keys / overlay are called through the raw WinRT ABI (Cast/WindowsMediaControls.cs). -->
+		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+		<!-- Single source of truth for the app version. The update checker reads it at runtime. -->
+		<Version>1.2.1</Version>
+		<AssemblyVersion>1.2.1.0</AssemblyVersion>
+		<FileVersion>1.2.1.0</FileVersion>
+	</PropertyGroup>
+
+	<!-- Kestrel (ASP.NET Core) replaces HttpListener: proper Range support, streaming uploads,
+	     and no admin rights / netsh urlacl needed on Windows. -->
 	<ItemGroup>
-		<AvaloniaResource Include="Assets\**" />
+		<FrameworkReference Include="Microsoft.AspNetCore.App" />
 	</ItemGroup>
 
-  <ItemGroup>
-    <PackageReference Include="Avalonia" Version="11.3.10" />
-    <PackageReference Include="Avalonia.Desktop" Version="11.3.10" />
-    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.10" />
-    <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.10" />
-    <!--Condition below is needed to remove Avalonia.Diagnostics package from build output in Release configuration.-->
-    <PackageReference Include="Avalonia.Diagnostics" Version="11.3.10">
-      <IncludeAssets Condition="'$(Configuration)' != 'Debug'">None</IncludeAssets>
-      <PrivateAssets Condition="'$(Configuration)' != 'Debug'">All</PrivateAssets>
-    </PackageReference>
-    <PackageReference Include="System.Text.Json" Version="10.0.1" />
-    <PackageReference Include="TagLibSharp" Version="2.3.0" />
-    <PackageReference Include="Xabe.FFmpeg" Version="6.0.2" />
-  </ItemGroup>
+	<ItemGroup>
+		<AvaloniaResource Include="Assets\**" />
+		<!-- The browser UI is a static page served from inside the exe. -->
+		<EmbeddedResource Include="Web\**" LogicalName="Web/%(RecursiveDir)%(Filename)%(Extension)" />
+	</ItemGroup>
 
-	<ItemGroup Condition="$(RuntimeIdentifier.StartsWith('win'))">
-		<Content Include="Binaries\win\ffmpeg.exe">
+	<ItemGroup>
+		<PackageReference Include="Avalonia" Version="11.3.10" />
+		<PackageReference Include="Avalonia.Desktop" Version="11.3.10" />
+		<PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.10" />
+		<PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.10" />
+		<PackageReference Include="Avalonia.Diagnostics" Version="11.3.10">
+			<IncludeAssets Condition="'$(Configuration)' != 'Debug'">None</IncludeAssets>
+			<PrivateAssets Condition="'$(Configuration)' != 'Debug'">All</PrivateAssets>
+		</PackageReference>
+		<PackageReference Include="QRCoder" Version="1.8.0" />
+		<PackageReference Include="System.Text.Json" Version="10.0.1" />
+		<PackageReference Include="TagLibSharp" Version="2.3.0" />
+
+		<!-- Built-in cast player: VLC's engine as a library. 3.9.6 is the newest release that works
+		     with Avalonia 11.3.10 (3.9.7.1+ requires Avalonia 11.3.13). -->
+		<PackageReference Include="LibVLCSharp" Version="3.9.6" />
+		<PackageReference Include="LibVLCSharp.Avalonia" Version="3.9.6" />
+	</ItemGroup>
+
+	<!-- libvlc itself. Windows/macOS get it from these packages (copied to libvlc\... next to the exe).
+	     Linux uses the system libvlc: install the "vlc" package. -->
+	<ItemGroup Condition="$(RuntimeIdentifier.StartsWith('win')) Or ('$(RuntimeIdentifier)' == '' And $([MSBuild]::IsOSPlatform('Windows')))">
+		<PackageReference Include="VideoLAN.LibVLC.Windows" Version="3.0.21" />
+	</ItemGroup>
+	<ItemGroup Condition="$(RuntimeIdentifier.StartsWith('osx')) Or ('$(RuntimeIdentifier)' == '' And $([MSBuild]::IsOSPlatform('OSX')))">
+		<PackageReference Include="VideoLAN.LibVLC.Mac" Version="3.1.3.1" />
+	</ItemGroup>
+
+	<!-- ffmpeg for thumbnails and live conversion (also for plain builds, e.g. F5 in Visual Studio). -->
+	<ItemGroup Condition="$(RuntimeIdentifier.StartsWith('win')) Or ('$(RuntimeIdentifier)' == '' And $([MSBuild]::IsOSPlatform('Windows')))">
+		<Content Include="Binaries\win\ffmpeg.exe" Condition="Exists('Binaries\win\ffmpeg.exe')">
 			<Link>ffmpeg.exe</Link>
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 			<CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
 			<ExcludeFromSingleFile>true</ExcludeFromSingleFile>
 		</Content>
-		<Content Include="Binaries\win\ffprobe.exe">
+		<Content Include="Binaries\win\ffprobe.exe" Condition="Exists('Binaries\win\ffprobe.exe')">
 			<Link>ffprobe.exe</Link>
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 			<CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
@@ -41,14 +71,15 @@
 		</Content>
 	</ItemGroup>
 
-	<ItemGroup Condition="$(RuntimeIdentifier.StartsWith('linux'))">
-		<Content Include="Binaries\linux\ffmpeg">
+	<!-- ffmpeg for thumbnails and live conversion (also for plain builds, e.g. F5 in Visual Studio). -->
+	<ItemGroup Condition="$(RuntimeIdentifier.StartsWith('linux')) Or ('$(RuntimeIdentifier)' == '' And $([MSBuild]::IsOSPlatform('Linux')))">
+		<Content Include="Binaries\linux\ffmpeg" Condition="Exists('Binaries\linux\ffmpeg')">
 			<Link>ffmpeg</Link>
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 			<CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
 			<ExcludeFromSingleFile>true</ExcludeFromSingleFile>
 		</Content>
-		<Content Include="Binaries\linux\ffprobe">
+		<Content Include="Binaries\linux\ffprobe" Condition="Exists('Binaries\linux\ffprobe')">
 			<Link>ffprobe</Link>
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 			<CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
@@ -56,14 +87,15 @@
 		</Content>
 	</ItemGroup>
 
-	<ItemGroup Condition="$(RuntimeIdentifier.StartsWith('osx'))">
-		<Content Include="Binaries\mac\ffmpeg">
+	<!-- ffmpeg for thumbnails and live conversion (also for plain builds, e.g. F5 in Visual Studio). -->
+	<ItemGroup Condition="$(RuntimeIdentifier.StartsWith('osx')) Or ('$(RuntimeIdentifier)' == '' And $([MSBuild]::IsOSPlatform('OSX')))">
+		<Content Include="Binaries\mac\ffmpeg" Condition="Exists('Binaries\mac\ffmpeg')">
 			<Link>ffmpeg</Link>
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 			<CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
 			<ExcludeFromSingleFile>true</ExcludeFromSingleFile>
 		</Content>
-		<Content Include="Binaries\mac\ffprobe">
+		<Content Include="Binaries\mac\ffprobe" Condition="Exists('Binaries\mac\ffprobe')">
 			<Link>ffprobe</Link>
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 			<CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
